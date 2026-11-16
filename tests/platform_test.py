@@ -332,9 +332,14 @@ class CodexUsage(unittest.TestCase):
         r, w = os.pipe()
         os.write(w, b'{"id":2,')
         os.write(w, b'"result":{}}\n')
-        with os.fdopen(r, 'rb') as rf:
+        rf = os.fdopen(r, 'rb')
+        try:
             self.assertEqual(usage.read_reply(rf, 2, 3), {'id': 2, 'result': {}})
-        os.close(w)
+        finally:
+            # 쓰는 쪽을 먼저 닫아 읽기 스레드가 끝(EOF)을 받게 한 뒤 읽는 쪽을 닫는다.
+            # 윈도에서는 다른 스레드가 읽고 있는 파이프를 닫으면 닫기가 끝없이 기다린다(11-17 Actions 에서 멈춤)
+            os.close(w)
+            rf.close()
 
     def test_main_with_fake_codex(self):
         # main() 이 찾는 codex 를 가짜로 바꾼다(진짜 codex·네트워크는 쓰지 않는다)
