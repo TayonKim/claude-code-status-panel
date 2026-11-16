@@ -6,15 +6,17 @@ A side pane for Claude Code in the terminal. While you chat, it shows the time, 
 
 [한국어](README.ko.md)
 
+![The pane while Claude fixes a bug: Clawd thinks, works, reads, waits for your answer and celebrates, under the Claude and Codex usage limits](https://github.com/TayonKim/claude-code-status-panel/releases/download/v0.8.1/demo.gif)
+
 ## What it shows
 
 - Clock, date and battery.
 - Claude and Codex usage limits: how much is left in each window, when it resets, and your pace against an even burn: on pace, N% reserve, or N% deficit (with when you'd run out at this rate).
-- Clawd, animated to match what Claude is doing, with your computer's free memory and load beside it.
+- Clawd, animated to match what Claude is doing: thinking, working, a question mark when a permission prompt or a question is waiting for you, a flinch when a tool call fails, and dozing off late at night. Your computer's free memory and load sit beside it.
 - Running `codex exec` jobs and Antigravity CLI (`agy -p`) jobs, plus interactive `agy` sessions and queued jobs, with model, effort and elapsed time. Click a job (or press 1–9) to see the end of its log or stop it.
 - Recently finished jobs, with a toast when each one ends.
 - The last 7 days: how long Claude worked and how many tokens it used (input, cache writes and output; cache reads are not counted), with a strip that shades each day by working time.
-- A playground of small Clawds at the bottom (in terminals that draw images: kitty, Ghostty or iTerm2). The sky follows the time of day.
+- A playground of small Clawds at the bottom (in terminals that draw images: kitty, Ghostty or iTerm2). The sky follows the time of day, with shooting stars and fireflies at night and birds and butterflies by day.
 
 The pane never calls a model and uses no tokens. It reads local information on a timer; the only network request is Codex's own usage check (see [Privacy](#privacy)).
 
