@@ -1,0 +1,13 @@
+{
+  "name": "claude-code-status-panel",
+  "owner": {
+    "name": "TayonKim"
+  },
+  "plugins": [
+    {
+      "name": "status-panel",
+      "source": "./",
+      "description": "A side pane for Claude Code: Claude and Codex usage limits, running Codex and Antigravity jobs, and an animated Clawd"
+    }
+  ]
+}

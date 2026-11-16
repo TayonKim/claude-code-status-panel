@@ -1,0 +1,83 @@
+# status-panel
+
+터미널의 Claude Code 대화 옆에 붙는 패널이에요. 대화하는 동안 시계, Claude·Codex 사용량 한도, 돌고 있는 작업을 보여 주고, Claude 가 하는 일에 반응하는 도트 마스코트 Clawd 가 같이 있어요.
+
+> Anthropic 과 관계없는 비공식 팬 프로젝트예요. Clawd 는 Anthropic 의 캐릭터예요. [Clawd 그림](#clawd-그림)을 봐 주세요.
+
+[English](README.md)
+
+## 보여 주는 것
+
+- 시계, 날짜, 배터리.
+- Claude·Codex 사용량 한도: 기간마다 남은 양, 리셋까지 남은 시간, 고르게 쓸 때와 견준 사용 속도(정상 속도·N% 여유·N% 부족, 부족하면 이 속도로 바닥나는 때도).
+- Claude 가 하는 일에 맞춰 움직이는 Clawd, 옆에 이 맥의 남은 메모리와 부하.
+- 돌고 있는 `codex exec` 작업과 Antigravity CLI(`agy -p`) 작업, 손으로 띄운 대화형 `agy`, 기다리는 작업: 모델, effort, 걸린 시간. 작업을 누르면(또는 1–9) 로그 끝부분을 보거나 작업을 멈출 수 있어요.
+- 최근 끝난 작업. 끝날 때마다 알림이 떠요.
+- 최근 7일: Claude 가 일한 시간과 쓴 토큰(입력·캐시 쓰기·출력, 캐시 읽기는 세지 않아요), 날마다 일한 시간만큼 진해지는 잔디 칸.
+- 맨 아래 작은 Clawd 들의 놀이터(iTerm2 에서만). 하늘은 시간에 따라 바뀌어요.
+
+패널은 모델을 부르지 않아서 토큰이 들지 않아요. 맥 안의 정보를 주기적으로 읽고, 네트워크 요청은 Codex 가 스스로 하는 사용량 확인 하나뿐이에요([개인정보](#개인정보) 참고).
+
+## 필요한 것
+
+- macOS. 배터리·메모리를 `pmset`, `memory_pressure`, `sysctl` 로 읽어요.
+- Claude Code 2.1.325 이상.
+- `python3`. 없으면 `xcode-select --install` 로 넣어요.
+- (선택) iTerm2 3.5 이상. Clawd·시계·최근 7일 잔디·놀이터를 그림으로 그려요. 다른 터미널에서는 Clawd 가 반 블록 글자로(패널 폭이 38칸 이상일 때), 시계와 최근 7일 잔디가 글자로 바뀌고 놀이터는 빠져요.
+- (선택) 로그인된 Codex CLI. Codex 사용량에 써요.
+
+## 설치
+
+Claude Code 터미널 세션의 입력창에서:
+
+```
+/plugin install status-panel --marketplace TayonKim/claude-code-status-panel
+```
+
+마켓플레이스를 추가할지 물으면 `y`, 그다음 범위를 골라요. 터미널이 넉넉하면(Claude Code 화면 배치에 따라 가로 약 110~144칸부터) 패널이 저절로 열려요. 더 좁은 터미널에서는 `/status-panel` 로 열어요.
+
+지우기: `/plugin uninstall status-panel`
+
+## 명령
+
+| 명령 | 하는 일 |
+|---|---|
+| `/status-panel` | 패널 열기 |
+| `/status-panel 언어 한국어` · `영어` · `자동` | 화면 언어 정하기. `자동`은 로캘을 따라요(`LC_ALL` → `LC_MESSAGES` → `LANG` 순서로 보고 `ko` 로 시작하면 한국어, 아니면 영어) |
+| `/clawd` · `/clawd 켜기` · `/clawd 끄기` | Clawd 켜기·끄기 전환, 또는 켜거나 끄기 |
+| `/clawd 민무늬` · `/clawd 테두리` | Clawd 모양 정하기: 민무늬(테두리 없음) 또는 테두리(스티커 바탕) |
+| `/clawd 놀이터` · `/clawd 놀이터 켜기` · `/clawd 놀이터 끄기` | 맨 아래 놀이터 켜기·끄기 전환, 또는 정하기 |
+| `/clawd 배경` · `/clawd 배경 켜기` · `/clawd 배경 끄기` | 놀이터 배경 켜기·끄기 전환, 또는 정하기 |
+
+고른 것은 다음 세션에도 남아요.
+
+## 개인정보
+
+모두 이 맥 안에서 읽어요.
+
+- 작업: 돌고 있는 프로세스와 그 명령 줄(`ps`), 돌고 있는 작업의 로그 파일과 폴더(`lsof`).
+- 배터리(`pmset`)와 메모리(`memory_pressure`, `sysctl`).
+- 최근 7일: Claude Code 가 `~/.claude/projects`(`CLAUDE_CONFIG_DIR` 을 정했으면 그 아래 `projects`)에 남기는 대화 기록 파일에서 시각·토큰 수와 직접 친 프롬프트인지만 뽑아요. 대화 내용은 남기거나 보여 주지 않아요.
+- Claude 사용량: Claude Code 가 알려 주는 값이에요.
+- Codex 사용량: 로그인된 Codex 계정으로 내 컴퓨터의 `codex app-server` 에 물어봐요. 5분쯤에 한 번, 그리고 작업이 끝날 때(`/status-panel` 을 칠 때도)예요. 이 요청은 Codex 가 OpenAI 에 보내고, 그 기록은 Codex 가 평소처럼 남겨요.
+- 그 밖에는 아무 데도 보내지 않아요.
+- 설정은 Claude Code 의 플러그인 저장소에 남겨요.
+- 패널이 쓰는 파일은 캐시 `~/.cache/status-panel/week.json` 하나뿐이에요(나만 읽을 수 있어요). 대화 기록 파일마다 경로, 어디까지 읽었는지, 날마다 합친 값, 같은 응답을 두 번 세지 않으려고 기억하는 최근 응답 몇 개의 ID 가 들어가요.
+- 개발용 조정 파일 `~/.claude/status-panel-tune.json` 은 있을 때만 읽어요.
+
+## Clawd 그림
+
+`clawd/sprites.json` 은 Anthropic 의 마스코트 Clawd 를 Anthropic 공식 Clawd 스티커를 바탕으로 찍은 팬 도트 그림이에요. 이 저장소의 MIT 라이선스에 들어가지 않고, 캐릭터의 권리는 Anthropic 에 있어요. 내려 달라는 요청이 오면 내릴게요.
+
+## 개발
+
+```
+claude plugin validate .
+claude plugin test .
+```
+
+개발할 때 조정용으로 `~/.claude/status-panel-tune.json` 이 있으면 5초마다 읽어요. `{ "debug": true }` 를 넣으면 패널 맨 위에 줄 수가 보여요.
+
+## 라이선스
+
+코드는 MIT 라이선스예요([LICENSE](LICENSE)). Clawd 그림은 MIT 밖이에요([Clawd 그림](#clawd-그림) 참고).

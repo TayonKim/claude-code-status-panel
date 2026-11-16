@@ -1,0 +1,83 @@
+# status-panel
+
+A side pane for Claude Code in the terminal. While you chat, it shows the time, your Claude and Codex usage limits and the jobs you have running, with Clawd, a pixel mascot that reacts to what Claude is doing.
+
+> Unofficial fan project, not affiliated with or endorsed by Anthropic. Clawd is Anthropic's character; see [Clawd artwork](#clawd-artwork).
+
+[한국어](README.ko.md)
+
+## What it shows
+
+- Clock, date and battery.
+- Claude and Codex usage limits: how much is left in each window, when it resets, and your pace against an even burn: on pace, N% reserve, or N% deficit (with when you'd run out at this rate).
+- Clawd, animated to match what Claude is doing, with your Mac's free memory and load beside it.
+- Running `codex exec` jobs and Antigravity CLI (`agy -p`) jobs, plus interactive `agy` sessions and queued jobs, with model, effort and elapsed time. Click a job (or press 1–9) to see the end of its log or stop it.
+- Recently finished jobs, with a toast when each one ends.
+- The last 7 days: how long Claude worked and how many tokens it used (input, cache writes and output; cache reads are not counted), with a strip that shades each day by working time.
+- A playground of small Clawds at the bottom (iTerm2 only). The sky follows the time of day.
+
+The pane never calls a model and uses no tokens. It reads local information on a timer; the only network request is Codex's own usage check (see [Privacy](#privacy)).
+
+## Requirements
+
+- macOS. Battery and memory come from `pmset`, `memory_pressure` and `sysctl`.
+- Claude Code 2.1.325 or later.
+- `python3`. If it's missing, run `xcode-select --install`.
+- Optional: iTerm2 3.5 or later, to draw Clawd, the clock, the 7-day strip and the playground as images. Other terminals get Clawd in half-block characters (when the pane is at least 38 columns wide), a text clock, a text 7-day strip and no playground.
+- Optional: the Codex CLI, signed in, for Codex usage.
+
+## Install
+
+At the prompt of a Claude Code terminal session:
+
+```
+/plugin install status-panel --marketplace TayonKim/claude-code-status-panel
+```
+
+Answer `y` to add the marketplace, then choose a scope. The pane opens by itself when the terminal is wide enough (from about 110–144 columns, depending on Claude Code's layout). In a narrower terminal, run `/status-panel`.
+
+To remove it: `/plugin uninstall status-panel`.
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `/status-panel` | Open the pane |
+| `/status-panel lang en` · `ko` · `auto` | Set the language. `auto` follows your locale (`LC_ALL`, then `LC_MESSAGES`, then `LANG`): Korean when it starts with `ko`, English otherwise |
+| `/clawd` · `/clawd on` · `/clawd off` | Toggle Clawd, or turn it on or off |
+| `/clawd plain` · `/clawd sticker` | Set Clawd's look: plain (no outline) or sticker (outlined) |
+| `/clawd yard` · `/clawd yard on` · `/clawd yard off` | Toggle or set the playground |
+| `/clawd bg` · `/clawd bg on` · `/clawd bg off` | Toggle or set the playground background |
+
+Settings persist across sessions.
+
+## Privacy
+
+Everything is read on your Mac:
+
+- Jobs: the running processes and their command lines (`ps`), and the log files and folders of running jobs (`lsof`).
+- Battery (`pmset`) and memory (`memory_pressure`, `sysctl`).
+- The last 7 days: Claude Code's own transcript files in `~/.claude/projects` (or `$CLAUDE_CONFIG_DIR/projects`), using only timestamps, token counts and whether a line is a prompt you typed. The conversation text is never stored or shown.
+- Claude usage: from Claude Code itself.
+- Codex usage: from your local `codex app-server`, under the Codex account you're signed in to, about every 5 minutes and when a job finishes (or when you run `/status-panel`). Codex makes that request to OpenAI and keeps its usual logs for it.
+- Nothing is sent anywhere else.
+- Settings are kept in Claude Code's plugin storage.
+- The only file the pane writes is `~/.cache/status-panel/week.json` (readable only by you). For each transcript file it holds the path, how far it has been read, its daily totals and the IDs of its last few responses, so that a repeated response is counted once.
+- The developer tuning file `~/.claude/status-panel-tune.json` is read only if it exists.
+
+## Clawd artwork
+
+`clawd/sprites.json` is fan-made pixel art of Clawd, Anthropic's mascot, based on Anthropic's official Clawd stickers. It is not covered by this repository's MIT license, and the character belongs to Anthropic. It will be taken down on request.
+
+## Development
+
+```
+claude plugin validate .
+claude plugin test .
+```
+
+For tuning while developing, a JSON file at `~/.claude/status-panel-tune.json` is read every 5 seconds if it exists. `{ "debug": true }` adds a line with the row counts at the top of the pane.
+
+## License
+
+The code is MIT licensed (see [LICENSE](LICENSE)). The Clawd artwork is not; see [Clawd artwork](#clawd-artwork).
