@@ -289,7 +289,7 @@ class CodexUsage(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
         self.fake = os.path.join(self.tmp, 'fake_server.py')
-        with open(self.fake, 'w') as f: f.write(FAKE_SERVER)
+        with open(self.fake, 'w', encoding='utf-8') as f: f.write(FAKE_SERVER)
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)

@@ -204,7 +204,7 @@ def scan_file(path, st, first_day, deadline, prog):
         pos = st['pos']
         f.seek(pos)
         for line in f:
-            if prog[0] and time.monotonic() > deadline:
+            if prog[0] and time.monotonic() >= deadline:
                 return False
             if line[-1:] != b'\n': break  # 아직 쓰는 중인 마지막 줄은 다음에
             n = len(line)
@@ -300,7 +300,7 @@ def run(root, cache_path, now, budget=BUDGET_S):
         if st['done'] and st['size'] == s.st_size and st['mtime'] == s.st_mtime and (st['ino'] == s.st_ino or not s.st_ino):
             files[path] = st
             continue
-        if prog[0] and time.monotonic() > deadline:
+        if prog[0] and time.monotonic() >= deadline:
             partial = True
             if st['pos'] or st['d']: files[path] = st
             continue
