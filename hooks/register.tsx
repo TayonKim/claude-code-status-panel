@@ -15,7 +15,7 @@ import { sameJob } from './proc'
 import { CLAUDE_WIN_S, dhOf, paceColor, paceOf, paceTag } from './pace'
 import { grassKey, grassPer, grassPng, grassTextTone, parseWeek, todayIdx, tokensText, weekdayOf } from './grass'
 import type { Floor } from './layout'
-import { YARD_BG_ROWS, YARD_ROWS, groundRgb, sceneKey, todOf, yardCount, yardFrames, yardScenePng, yardStripPng } from './yard'
+import { YARD_BG_ROWS, YARD_ROWS, soilRgb, sceneKey, todOf, yardCount, yardFrames, yardScenePng, yardStripPng } from './yard'
 import type { Tod } from './yard'
 
 // No model calls: local scripts are read on a timer, so the pane costs no tokens.
@@ -111,6 +111,8 @@ let lastGeo = '' // 패널 폭·스크롤·터미널 크기. 바뀌면 그림을
 let yardLastAt = 0
 let floor: Floor = FLOOR_NONE // 놀이터 바닥 높이(layout.ts nextFloor)
 const FLOOR_RAISE_MS = 10 * 60_000
+// 바닥 아래 빈 줄이 이보다 많으면(창을 키운 때 등) 흙으로 채우지 않고 놀이터를 한 번 내린다. 턴마다 생기는 1~3줄(작업자 줄·스피너)은 채운다
+const FILL_MAX_ROWS = 3
 const imgFree = () => !imgBusy && tickNo - imgLastTick >= tune.gap
 const imgBlit = async ($: any, args: Record<string, unknown>) => {
   imgBusy = true; imgLastTick = tickNo
@@ -1031,6 +1033,9 @@ export const register: Register = on => {
     if (term) floor = yardHereRaw ? nextFloor(floor, bodyRows, tNow, FLOOR_RAISE_MS) : FLOOR_NONE
     let layoutRows = term && floor.rows ? floor.rows : bodyRows
     let fit = fitAt(layoutRows)
+    if (term && floor.rows && bodyRows - floor.rows > FILL_MAX_ROWS) {
+      floor = { rows: bodyRows, tallerSince: 0 }; layoutRows = bodyRows; fit = fitAt(bodyRows)
+    }
     if (term && !fit.yard && layoutRows < bodyRows) {
       floor = { rows: bodyRows, tallerSince: 0 }; layoutRows = bodyRows; fit = fitAt(bodyRows)
     }
@@ -1111,7 +1116,7 @@ export const register: Register = on => {
     // 줄 수: 바닥까지 layoutRows + 땅 fillRows = bodyRows. 배경이 꺼진 띠(투명한 바탕에 얇은 풀밭 선)는 채우지 않는다
     const shownTod = (/^(day|dusk|night):/.exec(yardShown)?.[1] as Tod | undefined) ?? tod
     const fillRows = term && yardHere && wantBg && bodyRows > layoutRows ? bodyRows - layoutRows : 0
-    const fillColor = `#${groundRgb(shownTod).toString(16).padStart(6, '0')}`
+    const fillColor = `#${soilRgb(shownTod).toString(16).padStart(6, '0')}`
     const ground = fillRows ? (
       <Box flexDirection="column">
         {/* 그림은 칸 비율을 지키느라 오른쪽이 반 칸쯤 비어(yard.ts DOTS_PER_COL), 땅을 끝까지 채우면 오른쪽 아래에만 땅이 삐져나와 보였다(사용자 2026-11-16). 한 칸 좁게 */}

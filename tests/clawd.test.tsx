@@ -6,7 +6,7 @@ import {
   pickAct, pickMode, rasterCells, rasterWords, spinCells, spinGlyph, toolAct,
 } from '../hooks/clawd'
 import type { ClawdLive } from '../hooks/clawd'
-import { groundRgb } from '../hooks/yard'
+import { soilRgb } from '../hooks/yard'
 
 // Clawd: 동작 고르기(우선순위·1.2초 유지·축하·한가함 단계), Raster 칸(반 블록 색), 화면 방식, 훅이 결과를 그대로 넘기는지.
 // 실행: claude plugin test .
@@ -590,7 +590,7 @@ test('놀이터 바닥: 아래 줄이 늘었다 줄어도 놀이터가 옮겨지
   await clock.advance(200)
   // 바깥 상자 = [바닥까지의 상자(minHeight = 바닥), 땅]. 땅은 바닥 아래 남는 줄을 장면 맨 아래 풀밭 색 글자 칸으로 채운다
   type El = { type?: string; props?: Record<string, unknown>; children?: unknown[] }
-  const grounds = new Set((['day', 'dusk', 'night'] as const).map(t => `#${groundRgb(t).toString(16).padStart(6, '0')}`))
+  const grounds = new Set((['day', 'dusk', 'night'] as const).map(t => `#${soilRgb(t).toString(16).padStart(6, '0')}`))
   const look = async (rows: number) => {
     const ui = await $.ui.mount({ ...PANE_R(46, rows), surface: 'terminal', viewport: VIEW })
     const root = (await ui.drawn()) as El
@@ -614,6 +614,9 @@ test('놀이터 바닥: 아래 줄이 늘었다 줄어도 놀이터가 옮겨지
   await slash($, '배경 켜기')
   await clock.advance(10 * 60_000 + 1000)
   expect(await look(44)).toEqual({ floor: 44, yard: true, fill: 0 }) // 커진 채 10분이 지나면 한 번에 내려간다
+  // 3줄 넘게 커지면(창을 키운 때 등) 흙으로 채우지 않고 바로 한 번 내린다(초록이 너무 많아 보였다)
+  expect(await look(41)).toEqual({ floor: 41, yard: true, fill: 0 })
+  expect(await look(46)).toEqual({ floor: 46, yard: true, fill: 0 })
   // 놀이터를 끄면 바닥을 잊는다: 다시 켜면 그때 높이부터
   await slash($, '놀이터 끄기')
   expect(await look(40)).toEqual({ floor: undefined, yard: false, fill: 0 })

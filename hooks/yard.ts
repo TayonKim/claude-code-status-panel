@@ -96,6 +96,11 @@ const THEME: Record<Tod, { sky: [number, number]; far: number; near: number; gra
 }
 /** 배경 있는 장면의 맨 아랫줄(풀밭) 색. 바닥 아래 빈 줄을 이 색 글자 칸으로 채운다(register.tsx 의 땅) */
 export const groundRgb = (tod: Tod) => THEME[tod].grass
+/** 놀이터 아래를 채우는 흙 색: 풀밭 색을 어둡게(초록이 너무 많아 보였다, 사용자 2026-11-16) */
+export const soilRgb = (tod: Tod) => {
+  const g = groundRgb(tod), dk = (c: number) => Math.round(c * 0.45)
+  return (dk((g >> 16) & 255) << 16) | (dk((g >> 8) & 255) << 8) | dk(g & 255)
+}
 const ch = (c: number, s: number) => (c >> s) & 255
 const lerp = (a: number, b: number, t: number) =>
   (Math.round(ch(a, 16) + (ch(b, 16) - ch(a, 16)) * t) << 16) | (Math.round(ch(a, 8) + (ch(b, 8) - ch(a, 8)) * t) << 8) | Math.round(ch(a, 0) + (ch(b, 0) - ch(a, 0)) * t)
