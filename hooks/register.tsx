@@ -1114,7 +1114,8 @@ export const register: Register = on => {
     const fillColor = `#${groundRgb(shownTod).toString(16).padStart(6, '0')}`
     const ground = fillRows ? (
       <Box flexDirection="column">
-        {Array.from({ length: fillRows }, () => <Text backgroundColor={fillColor} wrap="truncate-end">{' '.repeat(yCols)}</Text>)}
+        {/* 그림은 칸 비율을 지키느라 오른쪽이 반 칸쯤 비어(yard.ts DOTS_PER_COL), 땅을 끝까지 채우면 오른쪽 아래에만 땅이 삐져나와 보였다(사용자 2026-11-16). 한 칸 좁게 */}
+        {Array.from({ length: fillRows }, () => <Text backgroundColor={fillColor} wrap="truncate-end">{' '.repeat(Math.max(1, yCols - 1))}</Text>)}
       </Box>
     ) : null
 

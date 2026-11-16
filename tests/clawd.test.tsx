@@ -596,8 +596,8 @@ test('놀이터 바닥: 아래 줄이 늘었다 줄어도 놀이터가 옮겨지
     const root = (await ui.drawn()) as El
     const [floorBox, ground] = (root.children ?? []) as (El | undefined)[]
     const fills = ((ground?.children ?? []) as El[]).filter(c => c?.type === 'Text' && c.props?.backgroundColor)
-    // 땅 한 줄은 놀이터 폭(46칸)만큼의 빈칸, 모두 한 색(그 시간대의 풀밭 색)
-    for (const f of fills) expect([f.children, grounds.has(String(f.props?.backgroundColor)), f.props?.backgroundColor]).toEqual([[' '.repeat(46)], true, fills[0]!.props?.backgroundColor])
+    // 땅 한 줄은 놀이터 폭(46칸)보다 한 칸 좁은 빈칸(그림 오른쪽 끝이 반 칸쯤 비어서), 모두 한 색(그 시간대의 풀밭 색)
+    for (const f of fills) expect([f.children, grounds.has(String(f.props?.backgroundColor)), f.props?.backgroundColor]).toEqual([[' '.repeat(45)], true, fills[0]!.props?.backgroundColor])
     const yard = !!(await ui.find({ type: 'Image', key: 'yard' }))
     await ui.unmount()
     // 줄 수: 바닥 + 땅 = 패널 높이(땅이 있을 때)
