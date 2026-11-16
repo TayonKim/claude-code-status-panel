@@ -29,6 +29,9 @@ export const CAP: Record<ClawdAct, { text: string; color?: string }> = {
   bubble: { text: T.bubble },
   kite: { text: T.kite },
   dizzy: { text: T.dizzy, color: 'warning' },
+  ask: { text: T.ask, color: 'warning' },
+  oops: { text: T.oops, color: 'error' },
+  sleepy: { text: T.sleepy },
 }
 /** 그 언어의 설명 글자 */
 export const capText = (act: ClawdAct, lang: Lang) => STR[lang].cap[act] ?? STR[lang].cap.idle
@@ -39,13 +42,28 @@ export const BIG_TURN_MS = 60_000
 export const BUBBLE_AFTER_MS = 2 * 60_000
 export const KITE_AFTER_MS = 10 * 60_000
 export const FREEZE_AFTER_MS = 30 * 60_000
+/** 도구가 실패·거절됐거나 턴이 오류로 끝난 뒤 '앗' 을 보이는 시간 */
+export const OOPS_HOLD_MS = 2400
+/** 밤(현지 0:00~5:59)이면 한가함 동작 대신 꾸벅꾸벅 */
+export const NIGHT_FROM_H = 0
+export const NIGHT_UNTIL_H = 6
+export const isNight = (now: number) => { const h = new Date(now).getHours(); return h >= NIGHT_FROM_H && h < NIGHT_UNTIL_H }
 
 const SEARCH = new Set(['Grep', 'Glob', 'WebSearch', 'WebFetch', 'ToolSearch'])
 const READ = new Set(['Read', 'NotebookRead'])
 const EDIT = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
 const CAPE = new Set(['Agent', 'Task', 'Workflow'])
+// 사람의 대답이 올 때까지 끝나지 않는 도구(질문 창, 계획 승인 창): 도는 동안은 '대답 기다리는 중'
+const ASK = new Set(['AskUserQuestion', 'ExitPlanMode'])
 export const toolAct = (tool: string): ClawdAct =>
-  SEARCH.has(tool) ? 'search' : READ.has(tool) ? 'read' : EDIT.has(tool) ? 'edit' : CAPE.has(tool) ? 'cape' : 'work'
+  ASK.has(tool) ? 'ask' : SEARCH.has(tool) ? 'search' : READ.has(tool) ? 'read' : EDIT.has(tool) ? 'edit' : CAPE.has(tool) ? 'cape' : 'work'
+
+/** tool.call 결과가 실패인지: 거절({ deny }) 또는 도구가 알린 오류(isError) */
+export const isFailure = (r: unknown) => {
+  if (!r || typeof r !== 'object') return false
+  const o = r as { deny?: unknown; isError?: unknown }
+  return (typeof o.deny === 'string') || o.isError === true
+}
 
 /** 동작 고르기의 입력. 시각은 모두 ms. 메인 루프의 것만 담는다(서브에이전트의 도구·턴은 넣지 않음) */
 export type ClawdLive = {
@@ -66,23 +84,35 @@ export type ClawdLive = {
   lowUsage: boolean
   /** 마지막 활동 시각 */
   lastActivity: number
+  /** 권한 확인 창이 열려 사람의 대답을 기다리는 중(메인·서브에이전트 어느 쪽이든) */
+  ask?: boolean
+  /** 도구 실패·거절, 오류로 끝난 턴 뒤의 '앗'(until 까지) */
+  oops?: { until: number } | null
+  /** 현지 밤(0:00~5:59) */
+  night?: boolean
 }
 
 /** 지금 '활동 중'인지: 도구·메인 턴·서브에이전트·Codex/agy 작업 중 하나라도(작업이 도는 동안은 커피도 계속 움직인다) */
 export const isBusy = (l: ClawdLive) => l.tools.length > 0 || l.turn !== null || l.subagents || l.jobs
 
-/** 우선순위: 도구 → 메인 턴 → 서브에이전트 → 축하 → Codex 작업 → 한가함 */
+/**
+ * 우선순위: 대답 기다림 → 도구 → 앗(2.4초) → 도구 유지 → 메인 턴 → 서브에이전트 → 축하 → Codex 작업 → 사용량 바닥 → 한가함(밤엔 꾸벅꾸벅).
+ * 대답 기다림은 권한 확인 창이 열렸거나 질문 창 도구(AskUserQuestion 등)가 도는 동안: 사용자 차례라 무엇보다 먼저
+ */
 export const pickAct = (l: ClawdLive): ClawdAct => {
+  if (l.ask || l.tools.some(t => toolAct(t.name) === 'ask')) return 'ask'
   if (l.tools.length) {
     const latest = l.tools.reduce((a, b) => (b.at >= a.at ? b : a))
     return toolAct(latest.name)
   }
+  if (l.oops && l.now < l.oops.until) return 'oops'
   if (l.hold && l.now < l.hold.until) return l.hold.act
   if (l.turn) return l.turn.usedTool ? 'work' : 'think'
   if (l.subagents) return 'cape'
   if (l.celebrate && l.now < l.celebrate.until) return l.celebrate.act
   if (l.jobs) return 'coffee'
   if (l.lowUsage) return 'dizzy'
+  if (l.night) return 'sleepy'
   const idle = l.now - l.lastActivity
   return idle > KITE_AFTER_MS ? 'kite' : idle > BUBBLE_AFTER_MS ? 'bubble' : 'idle'
 }
@@ -106,6 +136,10 @@ export const msUntilChange = (st: { ms: number; seq: number[] } | undefined, t0:
   for (let k = 1; k <= n; k++) if (st.seq[(i + k) % n] !== st.seq[i]) return k * ms - into
   return Infinity
 }
+
+/** 메인 턴이 오류로 끝났을 때 축하 대신 보이는 '앗'. 그 밖의 이유면 null */
+export const oopsFor = (reason: string, now: number): ClawdLive['oops'] =>
+  reason === 'error' ? { until: now + OOPS_HOLD_MS } : null
 
 /** 메인 턴이 끝났을 때의 축하. aborted·error·refusal 은 없음 */
 export const celebrationFor = (reason: string, durationMs: number, now: number): ClawdLive['celebrate'] =>
@@ -132,7 +166,7 @@ export const REST_GLYPH = '✻'
 export const spinGlyph = (act: ClawdAct, i: number) =>
   SPIN_ACTS.has(act) ? SPIN_SEQ[((i % SPIN_SEQ.length) + SPIN_SEQ.length) % SPIN_SEQ.length]! : REST_GLYPH
 // Raster 는 테마 색 이름을 못 받아 RGB 로 준다. 밝은·어두운 테마 어느 쪽에서도 읽히는 중간 색
-const SPIN_RGB: Record<string, number> = { claude: 0xd77757, success: 0x3faa5a, suggestion: 0x8190f5, warning: 0xd99a00 }
+const SPIN_RGB: Record<string, number> = { claude: 0xd77757, success: 0x3faa5a, suggestion: 0x8190f5, warning: 0xd99a00, error: 0xd9534f }
 const SPIN_DIM = 0x8c8c8c
 export const spinColor = (act: ClawdAct) => { const c = CAP[act]?.color; return c ? SPIN_RGB[c] ?? SPIN_DIM : SPIN_DIM }
 /** 1×1 Raster 의 cells(표시 글자 하나, 글자색 = 설명 색) */

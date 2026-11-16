@@ -1,6 +1,6 @@
 {
   "name": "status-panel",
-  "version": "0.7.4",
+  "version": "0.8.0",
   "description": "A side pane next to the Claude Code chat: clock and battery, Claude and Codex usage limits with pace, running Codex and Antigravity CLI jobs (view logs, stop), your last 7 days of Claude work, and an animated Clawd",
   "types": "./types/index.d.ts",
   "author": {

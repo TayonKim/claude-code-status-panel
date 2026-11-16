@@ -5,13 +5,16 @@ import type { ClaudeWindow, ClawdAct, ClawdView, ClockView, CodexUsage, Finished
 import { BATT_CELLS, BATT_COLS, CLOCK_COLS, CLOCK_ROWS, battColor, battFill, battKey, batterySource, clockSource, dateOf, hmOf, parseBatt } from './clock'
 import {
   CAP, IMG_COLS, IMG_ROWS, RASTER_COLS, RASTER_ROWS, SIDE_TOP_ROWS, SPIN_ACTS, SPIN_SEQ, TOOL_HOLD_MS,
-  capText, celebrationFor, cellWidth, frameAt, isBusy, isFrozen, msUntilChange, pickAct, pickMode, rasterCells, spinCells, spinGlyph, toolAct,
+  OOPS_HOLD_MS, capText, celebrationFor, cellWidth, frameAt, isBusy, isFailure, isFrozen, isNight, msUntilChange, oopsFor, pickAct, pickMode,
+  rasterCells, spinCells, spinGlyph, toolAct,
 } from './clawd'
 import type { ClawdLive, ClawdMode, Sprites } from './clawd'
 import { AGY_TAG, ARGON_TTY, STR, langFromEnv, parseLangArg, prefOf } from './i18n'
 import type { Lang, LangPref } from './i18n'
 import { FLOOR_NONE, fitDone, nextFloor } from './layout'
 import { sameJob } from './proc'
+import { PY_CANDIDATES, PY_PROBE, checkArgv, fallbackHost, hostFromProbe, parsePower, powerArgv, pyArgv, stopPlan } from './host'
+import type { Host } from './host'
 import { CLAUDE_WIN_S, dhOf, paceColor, paceOf, paceTag } from './pace'
 import { grassKey, grassPer, grassPng, grassTextTone, parseWeek, todayIdx, tokensText, weekdayOf } from './grass'
 import type { Floor } from './layout'
@@ -135,6 +138,9 @@ const live = {
   hold: null as ClawdLive['hold'],
   turn: null as null | { id: string; usedTool: boolean },
   celebrate: null as ClawdLive['celebrate'],
+  oops: null as ClawdLive['oops'],
+  // 열린 권한 확인 창: 루프(메인은 '')·도구 이름마다 몇 개. 그 루프의 같은 도구 호출이 끝나면(허락돼 돌았거나 거절됨) 하나 줄인다
+  asks: new Map<string, number>(),
   subagents: false,
   jobs: false,
   lowUsage: false,
@@ -196,7 +202,19 @@ const pngOf = (look: ClawdView['look'], f: number) => sprites?.png[look][f] ?? s
 const liveNow = (now: number): ClawdLive => ({
   now, tools: [...live.tools.values()], hold: live.hold, turn: live.turn, celebrate: live.celebrate,
   subagents: live.subagents, jobs: live.jobs, lowUsage: live.lowUsage, lastActivity: live.lastActivity,
+  ask: live.asks.size > 0, oops: live.oops, night: isNight(now),
 })
+const askKey = (loop: string | undefined, tool: string) => `${loop ?? ''}\u0000${tool}`
+const askOpen = (k: string) => live.asks.set(k, (live.asks.get(k) ?? 0) + 1)
+const askDone = (k: string) => {
+  const n = (live.asks.get(k) ?? 0) - 1
+  if (n > 0) live.asks.set(k, n); else live.asks.delete(k)
+}
+/** 그 루프의 열린 권한 확인 창을 모두 닫힌 것으로(메인 턴이 시작·종료될 때) */
+const askClear = (loop: string | undefined) => {
+  const pre = `${loop ?? ''}\u0000`
+  for (const k of [...live.asks.keys()]) if (k.startsWith(pre)) live.asks.delete(k)
+}
 const curFrame = (now: number, l: ClawdLive) => {
   const st = sprites?.states[curAct]
   return st ? frameAt(st, actT0, now, isFrozen(l)) : 0
@@ -285,6 +303,7 @@ const clawdTick = async ($: any) => {
   if (isBusy(l)) live.lastActivity = l.lastActivity = now
   if (live.hold && now >= live.hold.until) live.hold = null
   if (live.celebrate && now >= live.celebrate.until) live.celebrate = null
+  if (live.oops && now >= live.oops.until) live.oops = null
   const act = pickAct(l)
   if (act !== curAct) { curAct = act; actT0 = now }
   // 설명 글자: 적어 둔 것과 달라졌을 때만 atom 을 고친다(글자가 같은 동작끼리는 다시 그리지 않는다)
@@ -386,14 +405,29 @@ const readClaude = async ($: any) => {
     if (JSON.stringify(prev) !== JSON.stringify(next)) await update($, claude, () => next)
   } catch { /* 수치를 못 읽으면 앞선 값을 그대로 둔다 */ }
 }
+// 파이썬을 부르는 명령과 운영체제: 세션마다 한 번 정하고(findHost), 파이썬을 부르는 곳은 모두 이 답을 기다린다
+let hostP: Promise<Host> = Promise.resolve(fallbackHost(undefined))
+const findHost = async ($: any): Promise<Host> => {
+  for (const py of PY_CANDIDATES) {
+    try {
+      const h = hostFromProbe(py, await $.process.run([...py, '-c', PY_PROBE], { timeoutMs: 8000 }))
+      if (h) return h
+    } catch { /* 없는 명령: 다음 후보 */ }
+  }
+  let osEnv: string | undefined
+  try { osEnv = await $.env.get('OS') } catch { /* 모르면 맥처럼 */ }
+  return fallbackHost(osEnv)
+}
 const readPower = async ($: any) => {
   try {
-    const r = await $.process.run(['pmset', '-g', 'batt'], { timeoutMs: 3000 })
-    const b = parseBatt(r.stdout || '')
+    const h = await hostP
+    // 맥 이외에서는 파이썬 도우미가 늦게 뜰 수 있어 조금 더 기다린다
+    const r = await $.process.run(powerArgv(h, $.plugin.root), { timeoutMs: h.os === 'darwin' ? 3000 : 8000 })
+    const b = h.os === 'darwin' ? parseBatt(r.stdout || '') : parsePower(r.stdout || '')
     if (b.pct !== null) battWant = battKey(b.pct, b.charging) // 그림은 틱이 차례에 맞춰 바꾼다
     const prev = await read($, power)
     if (prev.pct !== b.pct || prev.charging !== b.charging) await update($, power, () => ({ ...b, at: Math.floor(Date.now() / 1000) }))
-  } catch { /* pmset 이 없으면 배터리 칸을 그리지 않는다 */ }
+  } catch { /* pmset·도우미가 없으면 배터리 칸을 그리지 않는다 */ }
 }
 const checkClock = async ($: any) => {
   try {
@@ -453,7 +487,7 @@ const readWeek = async ($: any) => {
   weekBusy = true; weekAgain = false
   const gen = bgGen
   try {
-    const r = await $.process.run(['python3', `${$.plugin.root}/hooks/week.py`], { timeoutMs: 15000 })
+    const r = await $.process.run(pyArgv(await hostP, `${$.plugin.root}/hooks/week.py`), { timeoutMs: 15000 })
     const w = parseWeek(r.stdout || '')
     if (!w) return
     weekAgain = !!w.partial
@@ -474,7 +508,7 @@ const readUsage = async ($: any) => {
   usageBusy = true; usageLast = t
   const gen = usageGen
   try {
-    const r = await $.process.run(['python3', `${$.plugin.root}/hooks/codex_usage.py`], { timeoutMs: 25000 })
+    const r = await $.process.run(pyArgv(await hostP, `${$.plugin.root}/hooks/codex_usage.py`), { timeoutMs: 25000 })
     const u = JSON.parse(r.stdout) as CodexUsage
     if (gen !== usageGen) return
     // 읽기에 실패하면 앞서 읽은 수치는 남기고 오류만 붙인다
@@ -495,6 +529,7 @@ export const register: Register = on => {
     await registerCommands($)
     usageGen++; usageBusy = false; usageLast = 0 // 앞 세션의 사용량 읽기는 버리고 새로 묻는다
     bgGen++; collecting = false; weekBusy = false; weekAgain = false; imgDenies = 0
+    hostP = findHost($) // 파이썬 명령·운영체제(기다리지 않는다: 첫 읽기들이 이 답을 기다린다)
     void $.ui.open({ id: PANE, title: S.title, backgroundColor: 'transparent' })
 
     // Clawd: 켜짐·모양은 세션이 바뀌어도 남는다($.store). 그림 자료는 모드 폴더의 sprites.json
@@ -526,7 +561,7 @@ export const register: Register = on => {
       try {
         let snap: Snapshot
         try {
-          const ran = await $.process.run(['python3', `${$.plugin.root}/hooks/collect.py`], { timeoutMs: 20000 })
+          const ran = await $.process.run(pyArgv(await hostP, `${$.plugin.root}/hooks/collect.py`), { timeoutMs: 20000 })
           snap = JSON.parse(ran.stdout)
         } catch (err) {
           const prev = await read($, snapshot)
@@ -559,7 +594,7 @@ export const register: Register = on => {
     }
     void tick()
     $.clock.every(EVERY_MS, () => void tick())
-    home = (await $.env.get('HOME')) ?? ''
+    home = (await $.env.get('HOME')) || (await $.env.get('USERPROFILE')) || '' // 윈도는 보통 HOME 이 없다
     // 배경 읽기는 세션이 끝나는 중에 늦게 끝나도 오류를 밖으로 내보내지 않는다
     const timeTick = async () => {
       try {
@@ -609,28 +644,55 @@ export const register: Register = on => {
 
 
   // ── Clawd 관찰 훅: 모듈 변수에 적기만 하고 next(e) 의 결과를 그대로 돌려준다 ──
-  // 서브에이전트(e.agentId 있음)의 도구·턴은 보지 않는다. 기다림(next)은 훅 예산에 들지 않는다(HookBudget)
+  // 서브에이전트(e.agentId 있음)의 도구·턴은 동작에 넣지 않는다(그 루프의 권한 확인 창을 닫는 데만 쓴다). 기다림(next)은 훅 예산에 들지 않는다(HookBudget)
+  // 결정(권한·결과)은 바꾸지 않는다: 모든 결과를 받은 그대로 돌려준다
   on('tool.call', async ($, e, next) => {
-    if (e.agentId !== undefined) return next(e)
-    const id = e.tool_use_id, name = e.tool, at = nowMs(), gen = turnGen
+    // 서브에이전트의 도구는 동작에 넣지 않고, 그 루프에 열린 권한 확인 창을 닫는 데만 쓴다
+    if (e.agentId !== undefined) {
+      const k = askKey(e.agentId, e.tool)
+      try { return await next(e) } finally { quiet(() => { if (live.asks.has(k)) askDone(k) }) }
+    }
+    const id = e.tool_use_id, name = e.tool, at = nowMs(), gen = turnGen, k = askKey(undefined, name)
     quiet(() => {
       live.tools.set(id, { name, at })
       if (live.turn) live.turn.usedTool = true
       live.lastActivity = at
       skip = 0
     })
+    let r: unknown
     try {
-      return await next(e)
+      const res = await next(e)
+      r = res
+      return res
     } finally {
       quiet(() => {
         if (live.tools.get(id)?.at === at) live.tools.delete(id)
+        if (live.asks.has(k)) askDone(k) // 권한 확인 창이 열렸던 호출이 끝났다(허락돼 돌았거나 거절됨)
         // 기다리는 사이에 턴이 끝났으면(중단 등) 끝난 턴의 도구가 동작을 되살리지 않게 그대로 둔다
         if (gen === turnGen) {
           const until = at + TOOL_HOLD_MS, t = nowMs() // 금방 끝난 도구도 시작부터 1.2초는 보이게
-          if (until > t) live.hold = { act: toolAct(name), until }
+          const act = toolAct(name)
+          // 대답을 기다리던 도구는 답이 오면 바로 끝낸다(유지하지 않음)
+          if (until > t && act !== 'ask') live.hold = { act, until }
+          if (isFailure(r)) live.oops = { until: t + OOPS_HOLD_MS } // 실패·거절: 2.4초 '앗'
           live.lastActivity = t
         }
       })
+    }
+  })
+
+  // 권한 확인 창(classic.PermissionRequest): 엔진이 사람에게 물을 때 울린다. 결과는 그대로 넘기고 결정은 건드리지 않는다.
+  // 아래 훅(설정 훅)이 대신 답했으면 창이 뜨지 않으므로 바로 닫는다. 아니면 그 루프의 같은 도구 호출이 끝날 때 닫는다
+  on('classic.PermissionRequest', async ($, e, next) => {
+    const k = askKey(e.agent_id, e.tool_name)
+    quiet(() => { askOpen(k); live.lastActivity = nowMs(); skip = 0 })
+    let answered = true
+    try {
+      const r = await next(e)
+      answered = !!r && typeof r === 'object' && ((r as { decision?: unknown }).decision !== undefined || (r as { block?: unknown }).block !== undefined)
+      return r
+    } finally {
+      if (answered) quiet(() => { if (live.asks.has(k)) askDone(k) })
     }
   })
 
@@ -641,6 +703,7 @@ export const register: Register = on => {
       live.turn = { id: e.turnId, usedTool: false }
       live.tools.clear(); live.hold = null
       live.celebrate = null // 새 턴이 시작되면 축하는 바로 취소
+      live.oops = null; askClear(undefined)
       live.lastActivity = nowMs()
       skip = 0
     })
@@ -648,6 +711,7 @@ export const register: Register = on => {
   })
 
   on('turn.complete', async ($, e, next) => {
+    if (e.agentId !== undefined) quiet(() => askClear(e.agentId)) // 서브에이전트의 턴이 끝나면 그 루프의 확인 창도 닫혔다
     if (e.agentId === undefined) quiet(() => {
       // 가장 최근에 시작한 턴의 종료만 받는다(시작을 못 들은 턴은 받는다). 다음 턴이 시작된 뒤에 늦게 온 옛 턴의 종료, 두 번 온 종료는 넘긴다
       if ((lastTurnId !== null && e.turnId !== lastTurnId) || e.turnId === doneTurnId) return
@@ -657,6 +721,10 @@ export const register: Register = on => {
       live.tools.clear(); live.hold = null // 끝난 턴의 도구는 더 보지 않고, 마지막 도구의 1.2초 유지보다 축하가 먼저
       const t = nowMs()
       live.celebrate = celebrationFor(e.reason, e.durationMs, t)
+      askClear(undefined) // 끝난 턴에 열려 있던 권한 확인 창은 닫혔다
+      // 오류로 끝나면 축하 대신 '앗'. 중단(aborted)은 거절 직후일 수 있어 이미 보이는 '앗' 을 그대로 둔다
+      const o = oopsFor(e.reason, t)
+      if (o) live.oops = o
       live.lastActivity = t
       skip = 0
     })
@@ -728,7 +796,7 @@ export const register: Register = on => {
       ? { open: u.open.filter(p => p !== pid), confirm: u.confirm === pid ? null : u.confirm }
       : { open: [...u.open, pid], confirm: u.confirm }))
     // 중지는 두 번 눌러야 실제로 멈춘다. 누르는 순간에도 그 작업이 아직 도는지 다시 확인한다
-    // 스냅숏은 5초(collect.py 가 실패하면 더) 묵었을 수 있어, 죽이기 전에 ps 로 그 pid 가 아직 같은 작업인지 다시 본다:
+    // 스냅숏은 5초(collect.py 가 실패하면 더) 묵었을 수 있어, 죽이기 전에 ps(맥) · hostos.py proc(리눅스·윈도)로 그 pid 가 아직 같은 작업인지 다시 본다:
     // 살아 있고, 명령이 그 종류(codex … exec · agy)이고, 시작 시각(지금 - etime)이 스냅숏의 것(at - elapsed)과 몇 초 안에서 같아야 한다
     const stopJob = async (pid: number, label: string) => {
       const sn = await read($, snapshot)
@@ -736,13 +804,19 @@ export const register: Register = on => {
       let same = false
       if (j) {
         try {
-          const ps = await $.process.run(['ps', '-p', String(pid), '-o', 'etime=,command='], { timeoutMs: 5000 })
+          const h = await hostP
+          const ps = await $.process.run(checkArgv(h, $.plugin.root, pid), { timeoutMs: h.os === 'darwin' ? 5000 : 10000 })
           same = ps.exitCode === 0 && sameJob(ps.stdout || '', j, sn.at, Math.floor(Date.now() / 1000))
         } catch { same = false }
       }
       if (!same) $.ui.toast(S.alreadyDone)
       else {
-        const r = await $.process.run(['kill', '-TERM', String(pid)], { timeoutMs: 5000 })
+        // 맥·리눅스 kill -TERM, 윈도 taskkill /T(안 되면 /F). 앞 명령이 성공하면 거기서 멈춘다
+        let r: { exitCode: number; stderr?: string } = { exitCode: 1, stderr: '' }
+        for (const argv of stopPlan((await hostP).os, pid)) {
+          r = await $.process.run(argv, { timeoutMs: 5000 })
+          if (r.exitCode === 0) break
+        }
         if (r.exitCode === 0) { stopped.add(pid); $.ui.toast(S.stopSent(labelOf(label))) }
         else $.ui.toast(S.stopFail(clean(r.stderr || '').slice(0, 60)))
       }

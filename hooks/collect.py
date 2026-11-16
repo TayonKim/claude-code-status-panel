@@ -1,16 +1,11 @@
 #!/usr/bin/env python3
-"""Snapshot of running `codex exec` and Antigravity CLI (`agy -p`) jobs and this Mac's memory, as one JSON line
-(read by the status-panel pane)."""
-import json, os, re, shlex, subprocess, time
+"""Snapshot of running `codex exec` and Antigravity CLI (`agy -p`) jobs and this machine's memory, as one JSON line
+(read by the status-panel pane). macOS reads ps, lsof, memory_pressure and sysctl; Linux and Windows go through hostos.py."""
+import json, os, re, shlex, subprocess, sys, time
 
-def sh(argv, timeout=5):
-    try: return subprocess.run(argv, capture_output=True, text=True, timeout=timeout).stdout
-    except Exception: return ''
-
-def etime_s(t):
-    d, _, hms = t.rpartition('-'); p = [int(x) for x in hms.split(':')]
-    while len(p) < 3: p.insert(0, 0)
-    return (int(d) if d else 0) * 86400 + p[0] * 3600 + p[1] * 60 + p[2]
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import hostos  # noqa: E402
+from hostos import IS_MAC, IS_WIN, etime_s, sh  # noqa: E402,F401
 
 def label_of(out, cwd):
     # reports/2026-10-24_데이터_정리_1차/보고.md -> 데이터 정리 1차 ; .../홍보_영상_시안/보고_오프닝.md -> 홍보 영상 시안 · 오프닝
@@ -57,8 +52,14 @@ def fd_path(pid, fd):
         if ln.startswith('n/'): return ln[1:]
     return ''
 
-def log_of(pid): return fd_path(pid, '1')
-def cwd_of(pid): return fd_path(pid, 'cwd')
+# 맥은 lsof. 리눅스(WSL 포함)는 /proc/<pid>/fd/1·cwd 를 바로 읽는다(lsof 가 없어도 된다).
+# 윈도는 다른 프로세스의 표준 출력·작업 폴더를 알 길이 없어 비워 둔다(로그는 -o·--log-file 로 받은 경로만)
+def log_of(pid):
+    if IS_MAC: return fd_path(pid, '1')
+    return '' if IS_WIN else hostos.proc_log(pid)
+def cwd_of(pid):
+    if IS_MAC: return fd_path(pid, 'cwd')
+    return '' if IS_WIN else hostos.proc_link(pid, 'cwd')
 
 def mtime(path):
     try: return os.path.getmtime(path) if path else 0
@@ -66,7 +67,7 @@ def mtime(path):
 
 now = time.time(); jobs, waiting = [], []
 
-def one(pid, et, rss, cmd):
+def one(pid, el, rss, cmd):
     # `codex exec …` 뿐 아니라 `codex --search exec …` 처럼 exec 앞에 전역 옵션이 붙은 실행도 잡는다(2026-11-06, 웹 검색 조사가 진행판에서 빠졌던 것)
     if re.match(r'^(\S*/)?codex(\s+--?[\w-]+(=\S+)?)*\s+exec(\s|$)', cmd):
         try: argv = shlex.split(cmd[:4000])
@@ -75,8 +76,8 @@ def one(pid, et, rss, cmd):
         cwd = a['cwd'] or cwd_of(pid)  # -C 가 없으면 프로세스의 작업 폴더
         out_abs = (a['out'] if os.path.isabs(a['out']) else os.path.join(cwd or '', a['out'])) if a['out'] else ''
         tl = tail_lines(log) if log else []
-        jobs.append({'pid': pid, 'tool': 'codex', 'label': label_of(a['out'], cwd), 'project': os.path.basename(cwd.rstrip('/')),
-                     'model': a['model'], 'effort': a['effort'], 'elapsed': etime_s(et), 'rssMB': rss // 1024,
+        jobs.append({'pid': pid, 'tool': 'codex', 'label': label_of(a['out'], cwd), 'project': os.path.basename(cwd.rstrip('/' + os.sep)),
+                     'model': a['model'], 'effort': a['effort'], 'elapsed': el, 'rssMB': rss // 1024,
                      'idle': int(now - mt) if mt else None, 'last': tl[-1] if tl else '', 'tail': tl, 'out': out_abs})
     elif re.match(r'^(\S*/)?agy\s', cmd) and re.search(r'\s(-p|--print|--prompt)\s', cmd):
         try: argv = shlex.split(cmd[:4000])
@@ -92,32 +93,46 @@ def one(pid, et, rss, cmd):
         mt = mtime(log)
         label = re.sub(r'^\d{4}-\d{2}-\d{2}_', '', os.path.splitext(os.path.basename(log))[0]).replace('_', ' ') if log else 'agy'
         tl = tail_lines(log) if log else []
-        jobs.append({'pid': pid, 'tool': 'argon', 'label': label, 'project': os.path.basename(cwd.rstrip('/')),
-                     'model': model, 'effort': '', 'elapsed': etime_s(et), 'rssMB': rss // 1024,
+        jobs.append({'pid': pid, 'tool': 'argon', 'label': label, 'project': os.path.basename(cwd.rstrip('/' + os.sep)),
+                     'model': model, 'effort': '', 'elapsed': el, 'rssMB': rss // 1024,
                      'idle': int(now - mt) if mt else None, 'last': tl[-1] if tl else '', 'tail': tl, 'out': log})
     elif re.match(r'^(\S*/)?agy(\s|$)', cmd):
         # interactive agy started by hand in a terminal: no prompt flag, no log file.
         # label 은 코드 값이고 진행판(hooks/i18n.ts ARGON_TTY)이 언어에 맞는 글자로 옮긴다
         cwd = cwd_of(pid)
-        jobs.append({'pid': pid, 'tool': 'argon', 'label': 'argon:interactive', 'project': os.path.basename(cwd.rstrip('/')),
-                     'model': '', 'effort': '', 'elapsed': etime_s(et), 'rssMB': rss // 1024,
+        jobs.append({'pid': pid, 'tool': 'argon', 'label': 'argon:interactive', 'project': os.path.basename(cwd.rstrip('/' + os.sep)),
+                     'model': '', 'effort': '', 'elapsed': el, 'rssMB': rss // 1024,
                      'idle': None, 'last': '', 'tail': [], 'out': ''})
     elif cmd.startswith('bash -c while kill -0') and ('codex exec' in cmd or 'agy ' in cmd):
         outs = re.findall(r'-o (\S+)', cmd)
-        waiting.append({'pid': pid, 'labels': [label_of(o, '') for o in outs], 'elapsed': etime_s(et)})
+        waiting.append({'pid': pid, 'labels': [label_of(o, '') for o in outs], 'elapsed': el})
 
-# -x: 이 사용자의 프로세스만(터미널이 없는 것도). 다른 사용자의 작업은 보지도, 중지하지도 않는다
-for ln in sh(['ps', '-xo', 'pid=,ppid=,etime=,rss=,command=']).splitlines():
-    m = re.match(r'\s*(\d+)\s+(\d+)\s+(\S+)\s+(\d+)\s+(.*)', ln)
-    if not m: continue
-    # 프로세스 하나가 이상해도(사이에 끝남·지워진 로그·못 읽는 명령 줄) 나머지는 그대로 적는다
-    try: one(int(m[1]), m[3], int(m[4]), m[5])
-    except Exception: pass
-mem = {}
-mp = sh(['memory_pressure'], 3); m = re.search(r'free percentage: (\d+)%', mp); mem['freePct'] = int(m[1]) if m else None
-sw = sh(['sysctl', '-n', 'vm.swapusage']); m = re.search(r'total = ([\d.]+)M\s+used = ([\d.]+)M', sw)
-if m: mem['swapUsedGB'], mem['swapTotalGB'] = round(float(m[2]) / 1024, 1), round(float(m[1]) / 1024, 1)
-la = sh(['sysctl', '-n', 'vm.loadavg']).split(); mem['load'] = float(la[1]) if len(la) > 1 else None
-mem['cpus'] = os.cpu_count()
-snap = {'at': int(now), 'jobs': jobs, 'waiting': waiting, 'mem': mem}
-print(json.dumps(snap, ensure_ascii=False))
+def mac_mem():
+    mem = {}
+    mp = sh(['memory_pressure'], 3); m = re.search(r'free percentage: (\d+)%', mp); mem['freePct'] = int(m[1]) if m else None
+    sw = sh(['sysctl', '-n', 'vm.swapusage']); m = re.search(r'total = ([\d.]+)M\s+used = ([\d.]+)M', sw)
+    if m: mem['swapUsedGB'], mem['swapTotalGB'] = round(float(m[2]) / 1024, 1), round(float(m[1]) / 1024, 1)
+    la = sh(['sysctl', '-n', 'vm.loadavg']).split(); mem['load'] = float(la[1]) if len(la) > 1 else None
+    mem['cpus'] = os.cpu_count()
+    return mem
+
+def collect(rows):
+    """rows: [(pid, ppid, elapsed_s, rss_kb, command)] from hostos.read_procs -> fills jobs and waiting"""
+    for pid, ppid, el, rss, cmd in rows:
+        # 프로세스 하나가 이상해도(사이에 끝남·지워진 로그·못 읽는 명령 줄) 나머지는 그대로 적는다
+        try: one(pid, el, rss, cmd)
+        except Exception: pass
+    if IS_WIN:
+        # 윈도에서는 `node …\codex.js exec` 와 그것이 띄운 `codex.exe exec` 가 둘 다 같은 작업으로 보여 바깥 것만 남긴다
+        keep = hostos.outermost(rows, {j['pid'] for j in jobs})
+        jobs[:] = [j for j in jobs if j['pid'] in keep]
+
+def main():
+    collect(hostos.read_procs())
+    mem = mac_mem() if IS_MAC else hostos.read_mem()
+    snap = {'at': int(now), 'jobs': jobs, 'waiting': waiting, 'mem': mem}
+    hostos.utf8_stdout()
+    print(json.dumps(snap, ensure_ascii=False))
+
+if __name__ == '__main__':
+    main()

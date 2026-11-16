@@ -1,5 +1,5 @@
 // 작업 중지 전 확인(hooks/register.tsx stopJob): 스냅숏(최대 5초, collect.py 가 실패하면 더 오래됨)의 pid 가
-// 지금도 같은 작업인지 `ps -p <pid> -o etime=,command=` 한 줄로 다시 본다. pid 가 다른 프로세스에 다시 쓰였으면 죽이지 않는다
+// 지금도 같은 작업인지 `ps -p <pid> -o etime=,command=` 한 줄(리눅스·윈도는 같은 모양을 찍는 hooks/hostos.py proc)로 다시 본다. pid 가 다른 프로세스에 다시 쓰였으면 죽이지 않는다
 
 /** ps 의 etime('[[dd-]hh:]mm:ss') → 초. 못 읽으면 null */
 export const etimeS = (t: string): number | null => {

@@ -7,7 +7,7 @@ WEEK = os.path.join(HERE, '..', 'hooks', 'week.py')
 
 # 날짜 경계를 정해 두려고 서머타임 없는 시간대로(+09:00)
 os.environ['TZ'] = 'Asia/Seoul'
-time.tzset()
+if hasattr(time, 'tzset'): time.tzset()  # 윈도에는 없다: 그 시스템의 시간대로(GitHub 러너는 UTC, 서머타임 없음)
 
 spec = importlib.util.spec_from_file_location('week', WEEK)
 week = importlib.util.module_from_spec(spec)
@@ -262,6 +262,7 @@ class Resume(Base):
         os.unlink(p)
         self.assertEqual(self.run_()['total'], {'secs': 0, 'tokens': 0, 'turns': 0})
 
+    @unittest.skipIf(os.name == 'nt', '윈도에는 유닉스 권한 비트가 없다')
     def test_cache_file_mode(self):
         # 캐시는 나만 읽는다: 파일 0600, 새로 만든 폴더 0700
         self.main_file(session(at(16, 1)))

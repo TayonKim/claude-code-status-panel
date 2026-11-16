@@ -145,7 +145,65 @@ const sceneBase = (W: number, tod: Tod) => {
   baseMemo = { key, g }
   return g
 }
-/** 장면의 열쇠: 이것이 같으면 그림도 같다(Clawd 장면들·구름 자리·별 반짝임·시간대) */
+// ── 놀이터의 작은 생물(시안 B1 밤하늘·B3 낮의 생물, 2026-11-17) ──
+// 밤: 가끔 별똥별 하나(짧게), 풀밭 위 반딧불이 몇 마리가 깜빡인다. 낮·저녁: 가끔 새떼가 하늘을 건너고, 낮에는 나비 두세 마리가 풀밭 위를 난다.
+// 띠를 그리는 시각(now)만으로 자리를 정하고, 열쇠(sceneKey)에 이미 있는 시간 칸만 쓴다: 낮·저녁은 구름과 같은 1.5초 칸, 밤은 별 반짝임과 같은 0.7초 칸.
+// 그래서 열쇠가 같으면 그림도 같고 띠를 보내는 횟수는 늘지 않는다(새 타이머 없음). 멈춘 동안은 지나가는 것(별똥별·새떼)은 없고 나머지는 제자리에 멈춘다.
+export const NIGHT_MS = 700
+export const DAY_MS = 1500
+const METEOR_EVERY = 64 // 밤 칸(0.7초) 64개(약 45초)마다 한 번 제비뽑기: 55% 로 별똥별이 4칸(2.8초) 지나간다
+const FLOCK_EVERY = 150 // 낮 칸(1.5초) 150개(3분 45초)마다 한 번 제비뽑기: 80% 로 새떼가 한 번 건넌다
+const FLOCK_SPEED = 6 // 새떼가 한 칸에 가는 도트
+/** 0 이상 1 미만의 고른 수(정수 → 늘 같은 값) */
+const hash = (n: number) => {
+  let h = Math.imul((n | 0) ^ 0x9e3779b9, 0x85ebca6b)
+  h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35); h ^= h >>> 16
+  return (h >>> 0) / 4294967296
+}
+export type YardLife = {
+  meteor: { x: number; y: number; k: number } | null
+  fireflies: { x: number; y: number; lit: 0 | 1 | 2 }[]
+  birds: { x: number; y: number; up: boolean }[]
+  butterflies: { x: number; y: number; open: boolean; c: number }[]
+}
+/** 도트 폭 W 인 장면에서 지금 보일 생물들의 자리(순수 함수, 시험용으로도 쓴다) */
+export const yardLife = (W: number, now: number, frozen: boolean, tod: Tod): YardLife => {
+  const life: YardLife = { meteor: null, fireflies: [], birds: [], butterflies: [] }
+  if (tod === 'night') {
+    const t = frozen ? 0 : Math.floor(now / NIGHT_MS)
+    const c = Math.floor(t / METEOR_EVERY), k = (t % METEOR_EVERY) - (8 + Math.floor(hash(c * 2 + 1) * 48))
+    if (!frozen && hash(c * 2) < 0.55 && k >= 0 && k < 4)
+      life.meteor = { x: Math.round(W * (0.3 + 0.6 * hash(c * 2 + 7))) - 9 * k, y: 5 + Math.floor(hash(c * 2 + 9) * 10) + 3 * k, k }
+    const n = Math.max(2, Math.min(4, Math.round(W / 60)))
+    for (let i = 0; i < n; i++) {
+      const ax = Math.round((W * (i + 0.5)) / n + (hash(i * 13 + 5) - 0.5) * (W / n) * 0.6), ay = 87 + Math.floor(hash(i * 17 + 3) * 4)
+      const ph = (t + i * 3) % 6
+      life.fireflies.push({ x: ax + Math.round(3 * Math.sin(t * 0.45 + i * 2.1)), y: ay + Math.round(2 * Math.sin(t * 0.7 + i * 1.3)), lit: ph < 2 ? 2 : ph < 4 ? 1 : 0 })
+    }
+    return life
+  }
+  const t = frozen ? 0 : Math.floor(now / DAY_MS)
+  const dur = Math.ceil((W + 40) / FLOCK_SPEED), c = Math.floor(t / FLOCK_EVERY)
+  const k = (t % FLOCK_EVERY) - Math.floor(hash(c * 3 + 11) * Math.max(1, FLOCK_EVERY - dur))
+  if (!frozen && hash(c * 3 + 12) < 0.8 && k >= 0 && k < dur) {
+    const dir = hash(c * 3 + 13) < 0.5 ? -1 : 1, y0 = 14 + Math.floor(hash(c * 3 + 14) * 16)
+    const lead = dir > 0 ? -20 + FLOCK_SPEED * k : W + 20 - FLOCK_SPEED * k
+    const flock = W >= 150 ? [[0, 0], [-7, -3], [-8, 3], [-14, -5]] : [[0, 0], [-7, -3], [-8, 3]]
+    flock.forEach(([dx, dy], j) => life.birds.push({ x: lead + dx! * dir, y: y0 + dy!, up: (t + j) % 2 === 0 }))
+  }
+  if (tod === 'day') {
+    const n = Math.max(1, Math.min(3, Math.round(W / 80)))
+    for (let i = 0; i < n; i++) {
+      const ax = Math.round(W * (n === 1 ? 0.5 : 0.15 + (0.7 * i) / (n - 1)))
+      life.butterflies.push({ x: ax + Math.round(8 * Math.sin(t * 0.21 + i * 2.4)), y: 87 + Math.round(2 * Math.sin(t * 0.5 + i * 1.7)), open: (t + i) % 2 === 0, c: i % 3 })
+    }
+  }
+  return life
+}
+const BIRD = { up: ['X...X', '.X.X.', '..X..'], down: ['.....', 'XX.XX', '..X..'] }
+const FLY = { open: ['WW.WW', 'WWbWW', '.W.W.'], shut: ['.W.W.', '.WbW.', '..b..'] } // 나비: 날개를 폈다(5칸) 접었다(위로 모아 3칸)
+
+/** 장면의 열쇠: 이것이 같으면 그림도 같다(Clawd 장면들·구름 자리·별 반짝임·시간대. 생물(yardLife)도 이 시간 칸만 쓴다) */
 export const sceneKey = (frames: number[], now: number, frozen: boolean, tod: Tod) =>
   `${tod}:${frames.join(',')}:${frozen ? 0 : Math.floor(now / 1500)}${tod === 'night' && !frozen ? `:${Math.floor(now / 700)}` : ''}`
 let sceneMemo = { key: '', png: '' }
@@ -177,12 +235,26 @@ export const yardScenePng = (sprites: Sprites, frames: number[], cols: number, n
       if (on && i % 3 === 0) for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) if (g[(sy + dy) * W + x + dx]! <= SKY) g[(sy + dy) * W + x + dx] = I.starDim
     })
   }
+  const life = yardLife(W, now, frozen, tod)
+  const put = (x: number, y: number, c: number, skyOnly = false) => {
+    if (x < 0 || y < 0 || x >= W || y >= SCENE_H || (skyOnly && g[y * W + x]! > SKY)) return
+    g[y * W + x] = c
+  }
+  const glyph = (rows: readonly string[], x: number, y: number, color: (ch: string) => number) => {
+    rows.forEach((row, j) => { for (let i = 0; i < row.length; i++) if (row[i] !== '.') put(x + i, y + j, color(row[i]!)) })
+  }
+  if (life.meteor) { // 별똥별: 왼쪽 아래로 가는 밝은 머리와 오른쪽 위로 끌리는 꼬리, 하늘에만(언덕·달 뒤로 지나간다). 마지막 칸은 꼬리만 흐리게
+    const { x, y, k } = life.meteor, tail = k === 0 ? 3 : 8
+    for (let i = 1; i <= tail; i++) put(x + i, y - Math.round(i / 3), i <= 2 && k < 3 ? I.star : I.starDim, true)
+    if (k < 3) put(x, y, I.star, true)
+  }
   const drift = Math.floor(step / 1500)
   for (const [bx, by] of [[30, 16], [120, 26], [200, 10]] as const) {
     const cx0 = ((Math.round(bx * r) + drift) % (W + 30)) - 15
     for (const [dx, dy, rr] of [[0, 0, 5], [6, -2, 6], [12, 0, 5], [5, 2, 5]] as const)
       disc(g, W, cx0 + dx, by + dy, rr, (_x, y) => (y > rr * 0.4 ? I.cloud2 : I.cloud))
   }
+  for (const b of life.birds) glyph(b.up ? BIRD.up : BIRD.down, b.x - 2, b.y - 1, () => I.trunk) // 새떼: 구름 앞으로, 날갯짓은 칸마다
   // 뒷줄 먼저, 앞줄 나중
   const order = frames.map((_, i) => i).sort((a, b) => (b % 2) - (a % 2))
   for (const i of order) {
@@ -198,6 +270,14 @@ export const yardScenePng = (sprites: Sprites, frames: number[], cols: number, n
       }
     }
   }
+  // 앞쪽 풀밭(앞줄 발보다 아래)의 반딧불이·나비는 Clawd 앞에
+  for (const f of life.fireflies) {
+    if (!f.lit) continue
+    put(f.x, f.y, f.lit === 2 ? I.star : I.fy)
+    if (f.lit === 2) for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) put(f.x + dx, f.y + dy, I.fy)
+  }
+  const wing = [I.fp, I.fy, I.fw]
+  for (const b of life.butterflies) glyph(b.open ? FLY.open : FLY.shut, b.x - 2, b.y - 1, ch => (ch === 'b' ? I.trunk : wing[b.c]!))
   // 도트를 SCALE 배로
   const PW = W * SCALE, px = new Uint8Array(PW * SCENE_H * SCALE), line = new Uint8Array(PW)
   for (let y = 0; y < SCENE_H; y++) {

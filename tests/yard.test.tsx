@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { Sprites } from '../hooks/clawd'
-import { GRASS_RGB, YARD, YARD_BG_ROWS, sceneKey, todOf, yardCount, yardFrame, yardFrames, yardPlan, yardScenePng, yardStripPng, yardStripSize } from '../hooks/yard'
+import { DAY_MS, GRASS_RGB, NIGHT_MS, YARD, YARD_BG_ROWS, sceneKey, todOf, yardCount, yardFrame, yardFrames, yardLife, yardPlan, yardScenePng, yardStripPng, yardStripSize } from '../hooks/yard'
 import { decodePng, unbase64 } from './helpers'
 
 // 놀이터 띠: 마리 수, 자리, 원래 도트 그대로(뒤집기 포함) 한 장으로 합쳐지는지.
@@ -92,4 +92,86 @@ test('배경 있는 놀이터: 9줄 그림 한 장, 시간대마다 하늘이 �
   expect(yardScenePng(SPRITES, frames, 55, 0, false, 'day')).not.toBe(yardScenePng(SPRITES, frames, 55, 3000, false, 'day'))
   // 한 장이 작다(터미널로 보내는 양)
   expect(yardScenePng(SPRITES, frames, 55, 0, false, 'day').length).toBeLessThan(20000)
+})
+
+// 놀이터의 작은 생물(시안 B1·B3): 밤 별똥별·반딧불이, 낮·저녁 새떼, 낮 나비
+test('생물: 시간대마다 맞는 것만 나온다', async () => {
+  const W = yardPlan(55, 5, 38).wd
+  const seen = (tod: 'day' | 'dusk' | 'night', ms: number, n: number) => {
+    const s = { meteor: 0, fireflies: 0, birds: 0, butterflies: 0 }
+    for (let i = 0; i < n; i++) {
+      const l = yardLife(W, 1_000_000_000 + i * ms, false, tod)
+      s.meteor += l.meteor ? 1 : 0; s.fireflies += l.fireflies.length; s.birds += l.birds.length; s.butterflies += l.butterflies.length
+    }
+    return s
+  }
+  const night = seen('night', NIGHT_MS, 3000), day = seen('day', DAY_MS, 600), dusk = seen('dusk', DAY_MS, 600)
+  expect(night.meteor).toBeGreaterThan(0)
+  expect(night.meteor / 3000).toBeLessThan(0.1) // 드물게: 시간의 10% 미만
+  expect(night.fireflies).toBe(3000 * 4)
+  expect(night.birds + night.butterflies).toBe(0)
+  expect(day.birds).toBeGreaterThan(0)
+  expect(day.butterflies).toBe(600 * 3)
+  expect(day.meteor + day.fireflies).toBe(0)
+  expect(dusk.birds).toBeGreaterThan(0)
+  expect(dusk.butterflies + dusk.meteor + dusk.fireflies).toBe(0)
+  // 새떼는 늘 있는 게 아니라 가끔 건넌다
+  let withBirds = 0
+  for (let i = 0; i < 600; i++) if (yardLife(W, 1_000_000_000 + i * DAY_MS, false, 'day').birds.length) withBirds++
+  expect(withBirds).toBeGreaterThan(0)
+  expect(withBirds).toBeLessThan(600 * 0.6)
+  // 별똥별은 한 번에 4칸(2.8초)을 넘지 않는다
+  let run = 0, longest = 0
+  for (let i = 0; i < 3000; i++) { run = yardLife(W, i * NIGHT_MS, false, 'night').meteor ? run + 1 : 0; longest = Math.max(longest, run) }
+  expect(longest).toBeGreaterThan(0)
+  expect(longest).toBeLessThanOrEqual(4)
+})
+
+test('생물: now 에 따라 움직이고, 열쇠가 같으면 그대로, 멈추면 제자리', async () => {
+  const W = yardPlan(55, 5, 38).wd, frames = [0, 1, 2, 3, 4]
+  // 새떼: 지나가는 동안 칸마다 6도트씩 옮겨 가고 날갯짓이 바뀐다
+  let t = 0
+  while (!yardLife(W, t * DAY_MS, false, 'day').birds.length) t++
+  const a = yardLife(W, (t + 1) * DAY_MS, false, 'day').birds, b = yardLife(W, (t + 2) * DAY_MS, false, 'day').birds
+  expect(Math.abs(b[0]!.x - a[0]!.x)).toBe(6)
+  expect(b[0]!.up).not.toBe(a[0]!.up)
+  // 나비·반딧불이도 시간에 따라 바뀐다
+  const fly = new Set(Array.from({ length: 20 }, (_, i) => JSON.stringify(yardLife(W, i * DAY_MS, false, 'day').butterflies)))
+  expect(fly.size).toBeGreaterThan(5)
+  const ff = new Set(Array.from({ length: 20 }, (_, i) => JSON.stringify(yardLife(W, i * NIGHT_MS, false, 'night').fireflies)))
+  expect(ff.size).toBeGreaterThan(5)
+  // 생물은 열쇠(sceneKey)에 있는 시간 칸만 쓴다: 열쇠가 같으면 생물도 같다(띠를 더 자주 보내지 않는다)
+  for (const tod of ['day', 'dusk', 'night'] as const) {
+    const byKey = new Map<string, string>()
+    for (let now = 5_000_000; now < 5_000_000 + 60_000; now += 97) {
+      const k = sceneKey(frames, now, false, tod), l = JSON.stringify(yardLife(W, now, false, tod))
+      if (!byKey.has(k)) byKey.set(k, l)
+      expect(byKey.get(k)).toBe(l)
+    }
+  }
+  // 멈추면: 지나가는 것(별똥별·새떼)은 없고, 나머지는 시각이 달라도 같은 자리, 그림도 같다
+  for (const tod of ['day', 'dusk', 'night'] as const) {
+    const x = yardLife(W, 1234, true, tod), y = yardLife(W, 98_765_432, true, tod)
+    expect(x).toEqual(y)
+    expect(x.meteor).toBe(null)
+    expect(x.birds).toHaveLength(0)
+    expect(yardScenePng(SPRITES, frames, 55, 1234, true, tod)).toBe(yardScenePng(SPRITES, frames, 55, 98_765_432, true, tod))
+  }
+})
+
+test('생물: 그림에 찍힌다(새떼는 하늘에 나무줄기 색, 반딧불이는 풀밭에 별빛 색)', async () => {
+  const W = yardPlan(55, 5, 38).wd, frames = [0, 1, 2, 3, 4]
+  const count = (png: string, rgb: number, y0: number, y1: number) => {
+    const d = decodePng(unbase64(png)); let n = 0
+    for (let y = y0 * 3; y < y1 * 3; y++) for (let x = 0; x < d.w; x++) if (d.palette[d.px[y * d.w + x]!] === rgb) n++
+    return n
+  }
+  let t = 0
+  while (!yardLife(W, t * DAY_MS, false, 'day').birds.some(b => b.x > 10 && b.x < W - 10)) t++
+  expect(count(yardScenePng(SPRITES, frames, 55, t * DAY_MS, false, 'day'), 0x7a5230, 0, 45)).toBeGreaterThan(0)
+  expect(count(yardScenePng(SPRITES, frames, 55, t * DAY_MS, true, 'day'), 0x7a5230, 0, 45)).toBe(0)
+  let n = 0
+  while (!yardLife(W, n * NIGHT_MS, false, 'night').fireflies.some(f => f.lit === 2)) n++
+  expect(count(yardScenePng(SPRITES, frames, 55, n * NIGHT_MS, false, 'night'), 0xfff6c8, 80, 96)).toBeGreaterThan(0)
+  expect(count(yardScenePng(SPRITES, frames, 55, n * NIGHT_MS, false, 'day'), 0xfff6c8, 80, 96)).toBe(0)
 })

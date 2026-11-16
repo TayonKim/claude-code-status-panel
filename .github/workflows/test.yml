@@ -1,0 +1,28 @@
+# Python tests of the pane's helpers on the three operating systems.
+# The engine tests (`claude plugin test .`) need the Claude Code CLI and are run locally before a release.
+name: test
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ['3.10', '3.13']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: week_test
+        run: python -I -B tests/week_test.py
+      - name: platform_test
+        run: python -I -B tests/platform_test.py

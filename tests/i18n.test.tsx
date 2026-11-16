@@ -107,8 +107,8 @@ test('en 표에 ko 의 키가 다 있고, 함수는 같은 인자 수다', () =>
 })
 
 test('영어 글자는 놓일 자리(Clawd 옆 12칸 이상·가장 좁은 패널 30칸)에 들어가고, 표의 영어에는 한글이 없다', () => {
-  // 대부분은 한국어보다 넓지 않다. 'Searching…'·'Waiting on subagents…' 는 더 넓어서 아래에서 실제 자리로 잰다
-  const wider = new Set(['search', 'cape'])
+  // 대부분은 한국어보다 넓지 않다. 'Searching…'·'Waiting on subagents…'·'Oops, that failed'·'Dozing off…' 는 더 넓어서 아래에서 실제 자리로 잰다
+  const wider = new Set(['search', 'cape', 'oops', 'sleepy'])
   for (const act of Object.keys(CAP) as (keyof typeof CAP)[])
     if (!wider.has(act)) expect([act, cellWidth(STR.en.cap[act]) <= cellWidth(STR.ko.cap[act])]).toEqual([act, true])
   // 설명 줄(돌아가는 표시 + 한 칸 + 글자)은 기본 폭(44칸)의 옆 칸(44 - 그림 19 - 1 = 24칸) 안. 그보다 좁으면 두 언어 다 … 로 잘린다
@@ -345,11 +345,11 @@ test('언어를 바꾸면 글자만 바뀌고 그림(시계·배터리·Clawd·�
   const before = await images()
   expect(before.map((b: { key?: string }) => b.key).sort()).toEqual(['batt', 'clawd', 'clock', 'yard'])
   const blits = calls.images.length
-  expect(await ui.find({ type: 'Text', text: /^쉬는 중$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^(쉬는 중|꾸벅꾸벅…)$/ })).toBeDefined()
 
   expect((await slash($, 'lang en')).text).toBe('Language: English')
   await ui.drawn()
-  expect(await ui.find({ type: 'Text', text: /^Resting$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^(Resting|Dozing off…)$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^OK$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^No jobs running$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: EN_DATE })).toBeDefined()
@@ -359,7 +359,7 @@ test('언어를 바꾸면 글자만 바뀌고 그림(시계·배터리·Clawd·�
 
   expect((await slash($, '언어 한국어')).text).toBe('언어: 한국어')
   await ui.drawn()
-  expect(await ui.find({ type: 'Text', text: /^쉬는 중$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^(쉬는 중|꾸벅꾸벅…)$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /\d+\/\d+ \([일월화수목금토]\)$/ })).toBeDefined()
   expect(await images()).toEqual(before)
   expect(calls.images.length).toBe(blits)

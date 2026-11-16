@@ -10,20 +10,23 @@
 
 - 시계, 날짜, 배터리.
 - Claude·Codex 사용량 한도: 기간마다 남은 양, 리셋까지 남은 시간, 고르게 쓸 때와 견준 사용 속도(정상 속도·N% 여유·N% 부족, 부족하면 이 속도로 바닥나는 때도).
-- Claude 가 하는 일에 맞춰 움직이는 Clawd, 옆에 이 맥의 남은 메모리와 부하.
+- Claude 가 하는 일에 맞춰 움직이는 Clawd, 옆에 이 컴퓨터의 남은 메모리와 부하.
 - 돌고 있는 `codex exec` 작업과 Antigravity CLI(`agy -p`) 작업, 손으로 띄운 대화형 `agy`, 기다리는 작업: 모델, effort, 걸린 시간. 작업을 누르면(또는 1–9) 로그 끝부분을 보거나 작업을 멈출 수 있어요.
 - 최근 끝난 작업. 끝날 때마다 알림이 떠요.
 - 최근 7일: Claude 가 일한 시간과 쓴 토큰(입력·캐시 쓰기·출력, 캐시 읽기는 세지 않아요), 날마다 일한 시간만큼 진해지는 잔디 칸.
-- 맨 아래 작은 Clawd 들의 놀이터(iTerm2 에서만). 하늘은 시간에 따라 바뀌어요.
+- 맨 아래 작은 Clawd 들의 놀이터(그림을 그리는 터미널에서만: kitty, Ghostty, iTerm2). 하늘은 시간에 따라 바뀌어요.
 
-패널은 모델을 부르지 않아서 토큰이 들지 않아요. 맥 안의 정보를 주기적으로 읽고, 네트워크 요청은 Codex 가 스스로 하는 사용량 확인 하나뿐이에요([개인정보](#개인정보) 참고).
+패널은 모델을 부르지 않아서 토큰이 들지 않아요. 컴퓨터 안의 정보를 주기적으로 읽고, 네트워크 요청은 Codex 가 스스로 하는 사용량 확인 하나뿐이에요([개인정보](#개인정보) 참고).
 
 ## 필요한 것
 
-- macOS. 배터리·메모리를 `pmset`, `memory_pressure`, `sysctl` 로 읽어요.
+- 운영체제:
+  - macOS: 모두 돼요. 배터리·메모리를 `pmset`, `memory_pressure`, `sysctl` 로 읽어요.
+  - Linux·WSL: 지원해요. 작업·메모리·부하는 `/proc`, 배터리는 `/sys/class/power_supply` 에서 읽어요(데스크톱은 배터리 칸이 빠져요).
+  - Windows: 시험판이에요. 흉내 낸 입력으로만 시험했어요. 작업은 PowerShell 한 번(`Get-CimInstance Win32_Process`), 메모리·배터리는 Windows 에서 바로 읽어요. 부하 수치가 없고 `codex exec` 작업의 로그 끝부분도 못 봐요(`agy --log-file` 로그는 보여요). Windows Terminal 에서는 아래의 글자 화면이에요.
 - Claude Code 2.1.325 이상.
-- `python3`. 없으면 `xcode-select --install` 로 넣어요.
-- (선택) iTerm2 3.5 이상. Clawd·시계·최근 7일 잔디·놀이터를 그림으로 그려요. 다른 터미널에서는 Clawd 가 반 블록 글자로(패널 폭이 38칸 이상일 때), 시계와 최근 7일 잔디가 글자로 바뀌고 놀이터는 빠져요.
+- 파이썬 3: `python3`, Windows 에서는 `python` 이나 `py` 도 돼요(`python3` → `python` → `py -3` 차례로 찾고, Microsoft Store 의 빈 바로 가기는 건너뛰어요). macOS 에서 없으면 `xcode-select --install` 로 넣어요.
+- (선택) 그림을 그리는 터미널(kitty, Ghostty, iTerm2 3.5 이상). Clawd·시계·최근 7일 잔디·놀이터를 그림으로 그려요. 다른 터미널에서는 Clawd 가 반 블록 글자로(패널 폭이 38칸 이상일 때), 시계와 최근 7일 잔디가 글자로 바뀌고 놀이터는 빠져요.
 - (선택) 로그인된 Codex CLI. Codex 사용량에 써요.
 
 ## 설치
@@ -53,10 +56,10 @@ Claude Code 터미널 세션의 입력창에서:
 
 ## 개인정보
 
-모두 이 맥 안에서 읽어요.
+모두 이 컴퓨터 안에서 읽어요.
 
-- 작업: 돌고 있는 프로세스와 그 명령 줄(`ps`), 돌고 있는 작업의 로그 파일과 폴더(`lsof`).
-- 배터리(`pmset`)와 메모리(`memory_pressure`, `sysctl`).
+- 작업: 내가 띄운 프로세스와 그 명령 줄(macOS `ps`, Linux `/proc`, Windows PowerShell `Get-CimInstance`), 돌고 있는 작업의 로그 파일과 폴더(macOS `lsof`, Linux `/proc`).
+- 배터리와 메모리(macOS `pmset`·`memory_pressure`·`sysctl`, Linux `/proc/meminfo`·`/sys/class/power_supply`, Windows `GlobalMemoryStatusEx`·`GetSystemPowerStatus`).
 - 최근 7일: Claude Code 가 `~/.claude/projects`(`CLAUDE_CONFIG_DIR` 을 정했으면 그 아래 `projects`)에 남기는 대화 기록 파일에서 시각·토큰 수와 직접 친 프롬프트인지만 뽑아요. 대화 내용은 남기거나 보여 주지 않아요.
 - Claude 사용량: Claude Code 가 알려 주는 값이에요.
 - Codex 사용량: 로그인된 Codex 계정으로 내 컴퓨터의 `codex app-server` 에 물어봐요. 5분쯤에 한 번, 그리고 작업이 끝날 때(`/status-panel` 을 칠 때도)예요. 이 요청은 Codex 가 OpenAI 에 보내고, 그 기록은 Codex 가 평소처럼 남겨요.
@@ -74,7 +77,11 @@ Claude Code 터미널 세션의 입력창에서:
 ```
 claude plugin validate .
 claude plugin test .
+python3 -I -B tests/week_test.py
+python3 -I -B tests/platform_test.py
 ```
+
+파이썬 시험은 GitHub Actions 에서 Ubuntu·macOS·Windows 로도 돌아요.
 
 개발할 때 조정용으로 `~/.claude/status-panel-tune.json` 이 있으면 5초마다 읽어요. `{ "debug": true }` 를 넣으면 패널 맨 위에 줄 수가 보여요.
 

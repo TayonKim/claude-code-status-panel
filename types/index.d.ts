@@ -31,7 +31,7 @@ export type ClaudeWindow = { kind: string; usedPct: number; resetsAt: number }
 export type PanelUi = { open: number[]; confirm: number | null }
 export type Finished = { pid: number; label: string; model: string; effort: string; at: number; elapsed: number; hasReport: boolean; stopped?: boolean; noOut?: boolean }
 /** Clawd 동작 이름(clawd/sprites.json 의 states) */
-export type ClawdAct = 'idle' | 'think' | 'search' | 'read' | 'edit' | 'work' | 'cape' | 'happy' | 'heart' | 'coffee' | 'bubble' | 'kite' | 'dizzy'
+export type ClawdAct = 'idle' | 'think' | 'search' | 'read' | 'edit' | 'work' | 'cape' | 'happy' | 'heart' | 'coffee' | 'bubble' | 'kite' | 'dizzy' | 'ask' | 'oops' | 'sleepy'
 /**
  * Clawd 표시 상태. 움직임의 프레임은 여기 두지 않는다(모듈 변수 + $.ui.blit).
  * on·look 은 $.store 'clawd' 에도 남아 세션이 바뀌어도 유지된다.

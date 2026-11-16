@@ -262,7 +262,7 @@ def save_cache(path, files):
         os.makedirs(os.path.dirname(path) or '.', mode=0o700, exist_ok=True)  # 새로 만드는 폴더만 0700
         # 경로에 작업 폴더 이름이 들어 있어 나만 읽게 0600 으로 만든다(os.replace 가 이 권한을 그대로 옮긴다)
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        os.fchmod(fd, 0o600)  # 남아 있던 같은 이름의 파일이 있어도
+        if hasattr(os, 'fchmod'): os.fchmod(fd, 0o600)  # 남아 있던 같은 이름의 파일이 있어도(윈도의 옛 파이썬에는 fchmod 가 없다)
         with os.fdopen(fd, 'w', encoding='utf-8') as f:
             json.dump({'v': CACHE_V, 'files': files}, f, ensure_ascii=False, separators=(',', ':'))
         os.replace(tmp, path)  # 반쯤 쓴 캐시가 남지 않게. 여러 패널이 동시에 써도 마지막 것이 온전히 남는다
@@ -296,7 +296,8 @@ def run(root, cache_path, now, budget=BUDGET_S):
         st = old.get(path)
         if not valid_state(st, main):
             st, dirty = fresh(main), True
-        if st['done'] and st['size'] == s.st_size and st['mtime'] == s.st_mtime and st['ino'] == s.st_ino:
+        # 윈도의 scandir stat 은 st_ino 가 늘 0 이라 그때는 크기·시각만 본다(맥·리눅스는 그대로)
+        if st['done'] and st['size'] == s.st_size and st['mtime'] == s.st_mtime and (st['ino'] == s.st_ino or not s.st_ino):
             files[path] = st
             continue
         if prog[0] and time.monotonic() > deadline:

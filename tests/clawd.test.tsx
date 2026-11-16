@@ -2,8 +2,8 @@ import { expect, mock, test } from 'claude-code/testing'
 
 import { clockSource } from '../hooks/clock'
 import {
-  BIG_TURN_MS, CAP, FREEZE_AFTER_MS, REST_GLYPH, SPIN_SEQ, TERM_DEFAULT, base64, celebrationFor, cellWidth, frameAt, isFrozen, msUntilChange,
-  pickAct, pickMode, rasterCells, rasterWords, spinCells, spinGlyph, toolAct,
+  BIG_TURN_MS, CAP, FREEZE_AFTER_MS, OOPS_HOLD_MS, REST_GLYPH, SPIN_SEQ, TERM_DEFAULT, base64, celebrationFor, cellWidth, frameAt, isFailure,
+  isFrozen, isNight, msUntilChange, oopsFor, pickAct, pickMode, rasterCells, rasterWords, spinCells, spinGlyph, toolAct,
 } from '../hooks/clawd'
 import type { ClawdLive } from '../hooks/clawd'
 import { soilRgb } from '../hooks/yard'
@@ -216,7 +216,7 @@ test('터미널(fullscreen)에서는 맨 위 왼쪽에 그림, 옆에 요약과 
   expect(img?.props).toMatchObject({ columns: 19, rows: 7, alt: 'Clawd' })
   // 옆 글자(시안 '라'안): ● 여유 / 메모리 · 부하 / 표시 + 설명. 폭 44 면 옆 24칸이라 메모리·부하가 한 줄
   expect(await ui.find({ type: 'Text', text: /^메모리 58% · 부하 4\.3\/10$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^쉬는 중$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: IDLE })).toBeDefined()
   expect(await ui.find({ type: 'Raster', key: 'clawd' })).toBeUndefined()
   expect((await ui.find({ type: 'Raster', key: 'spin' }))?.props).toMatchObject({ columns: 1, rows: 1, cells: spinCells('idle', 0) })
   await ui.unmount()
@@ -235,7 +235,7 @@ test('터미널(fullscreen)에서는 맨 위 왼쪽에 그림, 옆에 요약과 
   expect((await r.find({ type: 'Raster', key: 'clawd' }))?.props).toMatchObject({ columns: 38, rows: 16 })
   expect(await r.find({ type: 'Image' })).toBeUndefined()
   expect((await r.find({ type: 'Text', text: /여유 · 메모리 58% · 부하 4\.3\/10$/ }))).toBeDefined()
-  expect(await r.find({ type: 'Text', text: /^쉬는 중$/ })).toBeDefined()
+  expect(await r.find({ type: 'Text', text: IDLE })).toBeDefined()
   expect(await r.find({ type: 'Raster', key: 'spin' })).toBeDefined()
   await r.unmount()
 
@@ -244,7 +244,7 @@ test('터미널(fullscreen)에서는 맨 위 왼쪽에 그림, 옆에 요약과 
   await n.drawn()
   expect(await n.find({ type: 'Image', key: 'clawd' })).toBeDefined()
   expect((await n.find({ type: 'Text', text: /여유 · 메모리 58%/ }))).toBeDefined()
-  expect(await n.find({ type: 'Text', text: /^쉬는 중$/ })).toBeDefined()
+  expect(await n.find({ type: 'Text', text: IDLE })).toBeDefined()
   expect(await n.find({ type: 'Raster', key: 'spin' })).toBeDefined()
   await n.unmount()
 
@@ -253,7 +253,7 @@ test('터미널(fullscreen)에서는 맨 위 왼쪽에 그림, 옆에 요약과 
     const d = await $.ui.mount({ ...PANE(44), surface })
     await d.drawn()
     expect(await d.find({ type: 'Image' })).toBeUndefined()
-    expect(await d.find({ type: 'Text', text: /^쉬는 중$/ })).toBeDefined()
+    expect(await d.find({ type: 'Text', text: IDLE })).toBeDefined()
     expect(await d.find({ type: 'Text', text: /여유 · 메모리 58% · 부하 4\.3\/10$/ })).toBeDefined()
     // 그 밖의 표면은 Raster 가 없어 멈춘 표시 글자
     expect(await d.find({ type: 'Raster' })).toBeUndefined()
@@ -340,6 +340,8 @@ test('거부 문구가 달라도, 새로 그린 뒤의 확인이 세 번 거부�
 
 const VIEW = { columns: 120, rows: 40, isFullscreen: true }
 const cap = (ui: any, re: RegExp) => ui.find({ type: 'Text', text: re })
+// 한가함: 시험이 현지 밤(0~6시)에 돌면 꾸벅꾸벅이 나온다(아래 '밤' 시험이 정확히 본다)
+const IDLE = /^(쉬는 중|꾸벅꾸벅…)$/
 
 test('시간 흐름: 생각 → 도구(1.2초 유지) → 일하기 → 축하 3초 → 대기, 그동안 장면이 바뀌어 나간다', async ($, on) => {
   const clock = mock.clock(on, { now: Date.now() })
@@ -365,7 +367,7 @@ test('시간 흐름: 생각 → 도구(1.2초 유지) → 일하기 → 축하 3
   await clock.advance(300)
   expect(await cap(ui, /^다 했어요!$/)).toBeDefined()
   await clock.advance(3200)
-  expect(await cap(ui, /^쉬는 중$/)).toBeDefined()
+  expect(await cap(ui, IDLE)).toBeDefined()
   // 그동안 나간 그림이 한 가지가 아니다(같은 그림만 되풀이해 보낸 게 아님)
   expect(new Set(blits.sent).size).toBeGreaterThan(1)
   expect(blits.sent.every(p => p === PNG_EVEN || p === PNG_ODD)).toBe(true)
@@ -673,7 +675,7 @@ test('일하는 동안 설명 앞 표시가 돌고, 쉬면 ✻ 로 멈춰 더 �
   expect([...turning].every(c => thinkCells.has(c))).toBe(true)
   await $.turn.complete({ answer: 'a', durationMs: 5, isAborted: false, turnId: 't1', reason: 'answer' } as any)
   await clock.advance(4000) // 축하 3초 → 쉬는 중
-  expect(await cap(ui, /^쉬는 중$/)).toBeDefined()
+  expect(await cap(ui, IDLE)).toBeDefined()
   expect(spins.at(-1)).toBe(spinCells('idle', 0))
   const sent = spins.length
   await clock.advance(2000)
@@ -699,11 +701,11 @@ test('턴이 중단된 뒤 늦게 끝난 도구는 동작을 되살리지 않는
   // 중단: 축하 없이 바로 대기. 도구는 아직 안 끝났다
   await $.turn.complete({ answer: '', durationMs: 900, isAborted: true, turnId: 't1', reason: 'aborted' } as any)
   await clock.advance(300)
-  expect(await cap(ui, /^쉬는 중$/)).toBeDefined()
+  expect(await cap(ui, IDLE)).toBeDefined()
   release(undefined)
   expect(await pending).toMatchObject({ result: { stdout: 'late' } })
   await clock.advance(300)
-  expect(await cap(ui, /^쉬는 중$/)).toBeDefined()
+  expect(await cap(ui, IDLE)).toBeDefined()
   await ui.unmount()
 })
 
@@ -764,10 +766,10 @@ test('다음 턴이 끝난 뒤 늦게 온 옛 턴의 종료·두 번 온 종료�
   await clock.advance(300)
   expect(await cap(ui, /^다 했어요!$/)).toBeDefined()
   await clock.advance(3200)
-  expect(await cap(ui, /^쉬는 중$/)).toBeDefined()
+  expect(await cap(ui, IDLE)).toBeDefined()
   await done('B', 'answer') // 같은 종료가 한 번 더 와도 축하를 되살리지 않는다
   await clock.advance(300)
-  expect(await cap(ui, /^쉬는 중$/)).toBeDefined()
+  expect(await cap(ui, IDLE)).toBeDefined()
   await ui.unmount()
 })
 
@@ -833,5 +835,186 @@ test('닫았던 패널을 /status-panel 로 다시 열면 시계 그림을 지�
   await ($ as any).command.run({ command: 'status-panel', args: '' })
   ui = await $.ui.mount({ ...PANE(46), surface: 'terminal', viewport: VIEW })
   expect((await ui.find({ type: 'Image', key: 'clock' }))?.props.alt).toBe('11:00')
+  await ui.unmount()
+})
+
+// ── 새 동작: 대답 기다림(ask) · 앗(oops) · 꾸벅꾸벅(sleepy) ──
+test('대답 기다림: 권한 확인 창·질문 도구가 무엇보다 먼저, 끝나면 원래대로', async () => {
+  expect(toolAct('AskUserQuestion')).toBe('ask')
+  expect(toolAct('ExitPlanMode')).toBe('ask')
+  const busy = base({ tools: [{ name: 'Bash', at: T }], turn: { usedTool: true }, subagents: true, oops: { until: T + 1000 }, celebrate: { act: 'happy', until: T + 1000 } })
+  expect(pickAct({ ...busy, ask: true })).toBe('ask')
+  // 질문 도구는 더 늦게 시작한 다른 도구가 있어도 대답 기다림
+  expect(pickAct({ ...busy, tools: [{ name: 'AskUserQuestion', at: T - 5 }, { name: 'Read', at: T }] })).toBe('ask')
+  expect(pickAct(busy)).toBe('work')
+  expect(pickAct(base({ ask: true, night: true, now: T + 20 * 60_000 }))).toBe('ask')
+  expect(CAP.ask).toEqual({ text: '대답 기다리는 중…', color: 'warning' })
+})
+
+test('앗: 실패·거절 뒤 2.4초는 생각·일하기보다 먼저, 새 도구는 그보다 먼저, 오류로 끝난 턴은 축하 대신', async () => {
+  expect(isFailure({ deny: 'no' })).toBe(true)
+  expect(isFailure({ result: 'x', isError: true })).toBe(true)
+  expect(isFailure({ result: 'x' })).toBe(false)
+  expect(isFailure({ result: 'x', isError: false })).toBe(false)
+  expect(isFailure(undefined)).toBe(false)
+  const oops = { until: T + OOPS_HOLD_MS }
+  const hold = { act: 'read' as const, until: T + 1200 }
+  expect(pickAct(base({ oops, hold, turn: { usedTool: true } }))).toBe('oops')
+  expect(pickAct(base({ oops, turn: { usedTool: false }, now: T + OOPS_HOLD_MS - 1 }))).toBe('oops')
+  expect(pickAct(base({ oops, turn: { usedTool: true }, now: T + OOPS_HOLD_MS }))).toBe('work')
+  expect(pickAct(base({ oops, tools: [{ name: 'Grep', at: T }] }))).toBe('search')
+  // 턴 종료: 오류면 앗, 정상이면 축하(앗 없음)
+  expect(oopsFor('error', T)).toEqual({ until: T + OOPS_HOLD_MS })
+  for (const r of ['answer', 'aborted', 'refusal']) expect(oopsFor(r, T)).toBeNull()
+  expect(celebrationFor('error', 90_000, T)).toBeNull()
+  expect(pickAct(base({ oops: oopsFor('error', T), celebrate: celebrationFor('error', 90_000, T) }))).toBe('oops')
+  expect(pickAct(base({ oops: oopsFor('error', T), now: T + OOPS_HOLD_MS }))).toBe('idle')
+  expect(CAP.oops).toEqual({ text: '앗, 막혔어요', color: 'error' })
+})
+
+test('꾸벅꾸벅: 밤(0:00~5:59)의 한가함만 바꾸고, 일·축하·작업·사용량 바닥보다 아래', async () => {
+  const at = (h: number, m = 0) => new Date(2026, 10, 17, h, m).getTime()
+  expect(isNight(at(0))).toBe(true)
+  expect(isNight(at(3, 30))).toBe(true)
+  expect(isNight(at(5, 59))).toBe(true)
+  expect(isNight(at(6))).toBe(false)
+  expect(isNight(at(12))).toBe(false)
+  expect(isNight(at(23, 59))).toBe(false)
+  const night = (o: Partial<ClawdLive> = {}) => base({ night: true, ...o })
+  // 한가함 단계 모두(쉬는 중·한가해요·연)
+  expect(pickAct(night())).toBe('sleepy')
+  expect(pickAct(night({ now: T + 2 * 60_000 + 1 }))).toBe('sleepy')
+  expect(pickAct(night({ now: T + 10 * 60_000 + 1 }))).toBe('sleepy')
+  // 낮에는 그대로
+  expect(pickAct(base({ night: false, now: T + 10 * 60_000 + 1 }))).toBe('kite')
+  // 일보다 위로 오지 않는다
+  expect(pickAct(night({ tools: [{ name: 'Edit', at: T }] }))).toBe('edit')
+  expect(pickAct(night({ turn: { usedTool: false } }))).toBe('think')
+  expect(pickAct(night({ subagents: true }))).toBe('cape')
+  expect(pickAct(night({ celebrate: { act: 'happy', until: T + 1 } }))).toBe('happy')
+  expect(pickAct(night({ jobs: true }))).toBe('coffee')
+  expect(pickAct(night({ lowUsage: true }))).toBe('dizzy')
+  expect(pickAct(night({ oops: { until: T + 1 } }))).toBe('oops')
+  expect(CAP.sleepy).toEqual({ text: '꾸벅꾸벅…' })
+  // 30분 넘게 쉬면 그대로 멈춘다(밤이라고 더 움직이지 않음)
+  expect(isFrozen(night({ now: T + FREEZE_AFTER_MS + 1 }))).toBe(true)
+})
+
+test('엔진: 권한 확인 창이 열린 동안 대답 기다림, 그 호출이 끝나면 원래대로. 설정 훅이 대신 답하면 띄우지 않는다', async ($, on) => {
+  const clock = mock.clock(on, { now: Date.now() })
+  engine(on, { clock: true })
+  on('turn.start', (_: unknown, e: { turnId: string }) => ({ turnId: e.turnId }))
+  let release = (_: unknown) => {}
+  const gate = new Promise(r => { release = r })
+  on('tool.call', async () => { await gate; return { result: { stdout: 'ok' } } })
+  let hookAnswers = false
+  on('classic.PermissionRequest', () => (hookAnswers ? { decision: { behavior: 'allow' } } : {}))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await clock.advance(200)
+  const ui = await $.ui.mount({ ...PANE(44), surface: 'terminal', viewport: VIEW })
+  await $.turn.start({ text: 'x', turnId: 't1' })
+  const pending = $.tool.call({ tool: 'Bash', command: 'rm -rf build' } as any)
+  await clock.advance(300)
+  expect(await cap(ui, /^일하는 중…$/)).toBeDefined()
+  // 사람에게 묻는다(아래 훅이 답하지 않음 → 창이 뜸): 결과는 그대로
+  expect(((await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'rm -rf build' } } as any)) as any)?.decision).toBeUndefined()
+  await clock.advance(300)
+  expect(await cap(ui, /^대답 기다리는 중…$/)).toBeDefined()
+  // 허락돼 도구가 끝나면 원래대로
+  release(undefined)
+  expect(await pending).toMatchObject({ result: { stdout: 'ok' } })
+  await clock.advance(1500)
+  expect(await cap(ui, /^일하는 중…$/)).toBeDefined()
+  // 설정 훅이 대신 답한 확인은 창이 안 뜨므로 대답 기다림이 아니다. 답은 바꾸지 않고 넘긴다
+  hookAnswers = true
+  expect(await $.classic.PermissionRequest({ tool_name: 'Edit', tool_input: {} } as any)).toMatchObject({ decision: { behavior: 'allow' } })
+  await clock.advance(300)
+  expect(await cap(ui, /^일하는 중…$/)).toBeDefined()
+  // 서브에이전트의 확인 창도 사용자 차례: 그 루프의 같은 도구 호출이 끝나면 닫힌다
+  hookAnswers = false
+  await $.classic.PermissionRequest({ tool_name: 'Write', tool_input: {}, agent_id: 'a1' } as any)
+  await clock.advance(300)
+  expect(await cap(ui, /^대답 기다리는 중…$/)).toBeDefined()
+  expect(await $.tool.call({ tool: 'Write', file_path: '/x', content: '', agentId: 'a1' } as any)).toMatchObject({ result: { stdout: 'ok' } })
+  await clock.advance(300)
+  expect(await cap(ui, /^일하는 중…$/)).toBeDefined()
+  await ui.unmount()
+})
+
+test('엔진: 질문 도구(AskUserQuestion)가 도는 동안 대답 기다림, 답이 오면 바로 원래대로', async ($, on) => {
+  const clock = mock.clock(on, { now: Date.now() })
+  engine(on, { clock: true })
+  on('turn.start', (_: unknown, e: { turnId: string }) => ({ turnId: e.turnId }))
+  let release = (_: unknown) => {}
+  const gate = new Promise(r => { release = r })
+  on('tool.call', async () => { await gate; return { result: { answers: { q: 'a' } } } })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await clock.advance(200)
+  const ui = await $.ui.mount({ ...PANE(44), surface: 'terminal', viewport: VIEW })
+  await $.turn.start({ text: 'x', turnId: 't1' })
+  const pending = $.tool.call({ tool: 'AskUserQuestion', questions: [] } as any)
+  await clock.advance(300)
+  expect(await cap(ui, /^대답 기다리는 중…$/)).toBeDefined()
+  await clock.advance(5000) // 오래 기다려도 그대로
+  expect(await cap(ui, /^대답 기다리는 중…$/)).toBeDefined()
+  release(undefined)
+  expect(await pending).toMatchObject({ result: { answers: { q: 'a' } } })
+  await clock.advance(200) // 1.2초 유지 없이 곧바로
+  expect(await cap(ui, /^일하는 중…$/)).toBeDefined()
+  await ui.unmount()
+})
+
+test('엔진: 실패·거절한 도구는 2.4초 앗, 그 뒤 원래대로. 결과는 그대로 넘긴다', async ($, on) => {
+  const clock = mock.clock(on, { now: Date.now() })
+  engine(on, { clock: true })
+  on('turn.start', (_: unknown, e: { turnId: string }) => ({ turnId: e.turnId }))
+  on('tool.call', (_: unknown, e: { tool: string }) =>
+    e.tool === 'Bash' ? { result: { stdout: '', stderr: 'boom' }, isError: true } : e.tool === 'Write' ? { deny: 'no' } : { result: { stdout: 'ok' } })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await clock.advance(200)
+  const ui = await $.ui.mount({ ...PANE(44), surface: 'terminal', viewport: VIEW })
+  await $.turn.start({ text: 'x', turnId: 't1' })
+  expect(await $.tool.call({ tool: 'Bash', command: 'false' } as any)).toMatchObject({ isError: true })
+  await clock.advance(300)
+  expect(await cap(ui, /^앗, 막혔어요$/)).toBeDefined()
+  await clock.advance(1800) // 2.1초: 아직
+  expect(await cap(ui, /^앗, 막혔어요$/)).toBeDefined()
+  await clock.advance(500)
+  expect(await cap(ui, /^일하는 중…$/)).toBeDefined()
+  // 거절도
+  expect(await $.tool.call({ tool: 'Write', file_path: '/x', content: '' } as any)).toMatchObject({ deny: 'no' })
+  await clock.advance(300)
+  expect(await cap(ui, /^앗, 막혔어요$/)).toBeDefined()
+  await clock.advance(2500)
+  expect(await cap(ui, /^일하는 중…$/)).toBeDefined()
+  // 성공한 도구는 앗이 아니다
+  await $.tool.call({ tool: 'Read', file_path: '/x' } as any)
+  await clock.advance(300)
+  expect(await cap(ui, /^읽는 중…$/)).toBeDefined()
+  await ui.unmount()
+})
+
+test('엔진: 오류로 끝난 턴은 축하 대신 앗, 그 뒤 쉬기', async ($, on) => {
+  const clock = mock.clock(on, { now: Date.now() })
+  engine(on, { clock: true })
+  on('turn.start', (_: unknown, e: { turnId: string }) => ({ turnId: e.turnId }))
+  on('turn.complete', () => ({ text: '' }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await clock.advance(200)
+  const ui = await $.ui.mount({ ...PANE(44), surface: 'terminal', viewport: VIEW })
+  await $.turn.start({ text: 'x', turnId: 't1' })
+  await clock.advance(300)
+  await $.turn.complete({ answer: '', durationMs: 90_000, isAborted: false, turnId: 't1', reason: 'error' } as any)
+  await clock.advance(300)
+  expect(await cap(ui, /^앗, 막혔어요$/)).toBeDefined()
+  expect(await cap(ui, /^(다 했어요!|큰일을 끝냈어요!)$/)).toBeUndefined()
+  await clock.advance(2500)
+  expect(await cap(ui, IDLE)).toBeDefined()
+  // 다음 턴은 축하(앗이 남지 않음)
+  await $.turn.start({ text: 'y', turnId: 't2' })
+  await clock.advance(300)
+  await $.turn.complete({ answer: 'a', durationMs: 5000, isAborted: false, turnId: 't2', reason: 'answer' } as any)
+  await clock.advance(300)
+  expect(await cap(ui, /^다 했어요!$/)).toBeDefined()
   await ui.unmount()
 })
