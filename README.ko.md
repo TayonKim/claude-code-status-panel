@@ -43,6 +43,16 @@ Claude Code 터미널 세션의 입력창에서:
 
 지우기: `/plugin uninstall status-panel`
 
+### 새 버전으로 올리기
+
+```
+claude plugin update status-panel@claude-code-status-panel
+```
+
+그다음 Claude Code 입력창에서 `/reload-plugins` 를 실행해요. 이걸 해야 새 버전이 적용돼요. 다시 불러온 뒤 패널이 이상하면 Claude Code 를 껐다 켜요.
+
+플러그인 폴더의 파일을 직접 바꿨을 때(받은 저장소를 폴더에 덮어쓴 경우 등)도 같아요. 바꾼 뒤 `/reload-plugins` 를 실행해요.
+
 ## 명령
 
 | 명령 | 하는 일 |

@@ -43,6 +43,16 @@ Answer `y` to add the marketplace, then choose a scope. The pane opens by itself
 
 To remove it: `/plugin uninstall status-panel`.
 
+### Updating
+
+```
+claude plugin update status-panel@claude-code-status-panel
+```
+
+Then run `/reload-plugins` at the Claude Code prompt. The new version only takes effect after the reload. If the pane looks wrong afterwards, restart Claude Code.
+
+The same applies when you change the plugin's files directly (for example, copying a fresh checkout over the plugin folder): run `/reload-plugins` afterwards.
+
 ## Commands
 
 | Command | What it does |
