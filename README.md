@@ -20,6 +20,12 @@ A side pane for Claude Code in the terminal. While you chat, it shows the time, 
 
 The pane never calls a model and uses no tokens. It reads local information on a timer; the only network request is Codex's own usage check (see [Privacy](#privacy)).
 
+## Clawd's moods
+
+Clawd has 16 moods, each tied to what Claude is doing: the wand while it edits files, the cape while subagents work, a question mark when it is waiting for your answer, and more.
+
+![Clawd's 16 moods, each labelled with when it appears](https://github.com/TayonKim/claude-code-status-panel/releases/download/v0.8.2/moods.gif)
+
 ## Requirements
 
 - An operating system:
