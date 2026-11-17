@@ -120,10 +120,14 @@ test('영어 글자는 놓일 자리(Clawd 옆 12칸 이상·가장 좁은 패�
   expect(STR.en.cap.kite).toBe(STR.en.cap.bubble)
   expect(cellWidth(STR.en.busy)).toBeLessThanOrEqual(cellWidth(STR.ko.busy))
   expect(cellWidth(STR.en.free)).toBeLessThanOrEqual(cellWidth(STR.ko.free))
-  // 메모리·부하 줄: 영어 'Mem 58% free' 는 한국어보다 넓지만, 가장 좁은 옆 칸(12칸)에 한 줄씩 들어간다(빈 메모리 99% 까지.
-  // 100% 는 실제로 거의 안 나오고, 나오면 32칸 패널에서만 한 칸 잘린다)
+  // 메모리·부하 줄: 영어 'Mem 58% free' 는 가장 좁은 옆 칸(12칸)에 한 줄씩 들어간다(빈 메모리 99% 까지.
+  // 100% 는 실제로 거의 안 나오고, 나오면 32칸 패널에서만 한 칸 잘린다).
+  // 한국어 '메모리 58% 남음'(15칸)은 12칸에 안 들어가 그때는 짧은 쪽 '램 58% 남음'(100% 까지 12칸)
   for (const p of ['5', '58', '99', '?']) expect(cellWidth(STR.en.mem(p))).toBeLessThanOrEqual(SIDE_TEXT_COLS)
-  for (const p of ['5', '58', '100', '?']) expect(cellWidth(STR.ko.mem(p))).toBeLessThanOrEqual(SIDE_TEXT_COLS)
+  for (const p of ['5', '58', '99', '?']) expect(cellWidth(STR.en.memShort(p))).toBeLessThanOrEqual(SIDE_TEXT_COLS)
+  for (const p of ['5', '58', '100', '?']) expect(cellWidth(STR.ko.memShort(p))).toBeLessThanOrEqual(SIDE_TEXT_COLS)
+  expect(STR.ko.mem('58')).toBe('메모리 58% 남음')
+  expect(cellWidth(STR.ko.mem('58'))).toBeGreaterThan(SIDE_TEXT_COLS)
   expect(cellWidth(STR.en.load('12.3', 10))).toBeLessThanOrEqual(SIDE_TEXT_COLS)
   expect(cellWidth(STR.en.load('12.3', 10))).toBeLessThanOrEqual(cellWidth(STR.ko.load('12.3', 10)))
   for (let wd = 0; wd < 7; wd++) expect(cellWidth(STR.en.date(12, 31, STR.en.weekdays[wd]!))).toBeLessThanOrEqual(cellWidth(STR.ko.date(12, 31, STR.ko.weekdays[wd]!)))

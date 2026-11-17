@@ -84,7 +84,9 @@ const ko = {
   // Clawd 옆
   busy: '바쁨',
   free: '여유',
-  mem: (p: string) => `메모리 ${p}%`,
+  // 숫자는 남은 메모리(사용량으로 읽히지 않게 '남음', 사용량 줄의 'N% 남음'과 같은 말). 옆 칸이 좁으면 짧은 쪽
+  mem: (p: string) => `메모리 ${p}% 남음`,
+  memShort: (p: string) => `램 ${p}% 남음`,
   load: (l: string, c: number) => `부하 ${l}/${c}`,
   battAlt: (p: number) => `배터리 ${p}%`,
   cap: {
@@ -204,6 +206,7 @@ const en: Strings = {
   busy: 'Busy',
   free: 'OK',
   mem: (p: string) => `Mem ${p}% free`,
+  memShort: (p: string) => `Mem ${p}% free`,
   load: (l: string, c: number) => `Load ${l}/${c}`,
   battAlt: (p: number) => `Battery ${p}%`,
   cap: {

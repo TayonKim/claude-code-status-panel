@@ -946,13 +946,18 @@ export const register: Register = on => {
     const busyMark = (
       <Text><Text color={heavy ? 'warning' : 'success'}>● </Text><Text bold>{heavy ? S.busy : S.free}</Text></Text>
     )
-    const memText = S.mem(String(m.freePct ?? '?'))
+    const memPct = String(m.freePct ?? '?')
     const loadText = m.load !== null ? S.load(m.load.toFixed(1), m.cpus) : ''
-    const memLoad = loadText ? `${memText} · ${loadText}` : memText
+    const withLoad = (mt: string) => (loadText ? `${mt} · ${loadText}` : mt)
+    // 메모리 글자는 들어갈 자리(칸)보다 길면 짧은 쪽('메모리 58% 남음' → '램 58% 남음')
+    const memFor = (room: number) => (cellWidth(S.mem(memPct)) <= room ? S.mem(memPct) : S.memShort(memPct))
+    // 한 줄 방식: '● 여유 · ' 뒤에 남는 칸으로 메모리·부하가 다 들어가는지 본다
+    const lineRoom = (e.props.bodyColumns ?? 0) - cellWidth(`● ${heavy ? S.busy : S.free} · `)
+    const lineMem = cellWidth(withLoad(S.mem(memPct))) <= lineRoom ? S.mem(memPct) : S.memShort(memPct)
     const oneLine = () => (
       <Text wrap="truncate-end">
         {busyMark}
-        <Text> · {memLoad}</Text>
+        <Text> · {withLoad(lineMem)}</Text>
       </Text>
     )
     // 설명 줄(시안 '라'안): 앞에 표시 하나 + 한 칸 띄고 설명. 터미널은 돌아가는 1×1 Raster(틱이 blit), 그 밖은 멈춘 글자
@@ -991,11 +996,13 @@ export const register: Register = on => {
     const img = () => (
       <Image key={CLAWD_KEY} source={{ png: pngOf(cv.look, frame) }} columns={IMG_COLS} rows={IMG_ROWS} alt="Clawd" />
     )
-    // 옆 글자: Clawd 몸 높이(SIDE_TOP_ROWS 줄 아래)부터 '● 여유' · '메모리 · 부하' · 설명. 폭이 모자라면 메모리와 부하를 두 줄로
+    // 옆 글자: Clawd 몸 높이(SIDE_TOP_ROWS 줄 아래)부터 '● 여유' · '메모리 · 부하' · 설명. 폭이 모자라면 메모리와 부하를 두 줄로,
+    // 메모리 글자도 옆 칸보다 길면 짧은 쪽으로(가장 좁은 옆 칸 12칸에 '램 100% 남음'까지 들어간다)
     const sideCols = (e.props.bodyColumns ?? 0) - IMG_COLS - 1
-    const statusLines = cellWidth(memLoad) <= sideCols
-      ? [<Text wrap="truncate-end">{memLoad}</Text>]
-      : [<Text wrap="truncate-end">{memText}</Text>, ...(loadText ? [<Text wrap="truncate-end">{loadText}</Text>] : [])]
+    const sideMem = memFor(sideCols)
+    const statusLines = cellWidth(withLoad(sideMem)) <= sideCols
+      ? [<Text wrap="truncate-end">{withLoad(sideMem)}</Text>]
+      : [<Text wrap="truncate-end">{sideMem}</Text>, ...(loadText ? [<Text wrap="truncate-end">{loadText}</Text>] : [])]
     const top = mode === 'image-side' ? (
       <Box flexDirection="row" marginBottom={1}>
         {img()}

@@ -214,27 +214,37 @@ test('터미널(fullscreen)에서는 맨 위 왼쪽에 그림, 옆에 요약과 
   await ui.drawn()
   const img = await ui.find({ type: 'Image', key: 'clawd' })
   expect(img?.props).toMatchObject({ columns: 19, rows: 7, alt: 'Clawd' })
-  // 옆 글자(시안 '라'안): ● 여유 / 메모리 · 부하 / 표시 + 설명. 폭 44 면 옆 24칸이라 메모리·부하가 한 줄
-  expect(await ui.find({ type: 'Text', text: /^메모리 58% · 부하 4\.3\/10$/ })).toBeDefined()
+  // 옆 글자(시안 '라'안): ● 여유 / 메모리 · 부하 / 표시 + 설명. 폭 44 면 옆 24칸이라
+  // '메모리 58% 남음 · 부하 4.3/10'(29칸)이 안 들어가 메모리와 부하가 두 줄(Clawd 높이 안이라 줄 수는 같다)
+  expect(await ui.find({ type: 'Text', text: /^메모리 58% 남음$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^부하 4\.3\/10$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: IDLE })).toBeDefined()
   expect(await ui.find({ type: 'Raster', key: 'clawd' })).toBeUndefined()
   expect((await ui.find({ type: 'Raster', key: 'spin' }))?.props).toMatchObject({ columns: 1, rows: 1, cells: spinCells('idle', 0) })
   await ui.unmount()
 
-  // 옆 폭이 모자라면 메모리와 부하를 두 줄로
+  // 옆 폭이 모자라면 메모리와 부하를 두 줄로. 옆 16칸이면 '메모리 58% 남음'(15칸)은 그대로
   const w = await $.ui.mount({ ...PANE(36), surface: 'terminal', viewport: view })
   await w.drawn()
   expect(await w.find({ type: 'Image', key: 'clawd' })).toBeDefined()
-  expect(await w.find({ type: 'Text', text: /^메모리 58%$/ })).toBeDefined()
+  expect(await w.find({ type: 'Text', text: /^메모리 58% 남음$/ })).toBeDefined()
   expect(await w.find({ type: 'Text', text: /^부하 4\.3\/10$/ })).toBeDefined()
   await w.unmount()
+  // 가장 좁은 옆 칸(12칸): 메모리 글자를 짧은 쪽으로
+  const w2 = await $.ui.mount({ ...PANE(32), surface: 'terminal', viewport: view })
+  await w2.drawn()
+  expect(await w2.find({ type: 'Image', key: 'clawd' })).toBeDefined()
+  expect(await w2.find({ type: 'Text', text: /^램 58% 남음$/ })).toBeDefined()
+  expect(await w2.find({ type: 'Text', text: /메모리/ })).toBeUndefined()
+  expect(await w2.find({ type: 'Text', text: /^부하 4\.3\/10$/ })).toBeDefined()
+  await w2.unmount()
 
   // fullscreen 이 아니면 글자 방식: 요약 한 줄 위, Raster 38×16 아래
   const r = await $.ui.mount({ ...PANE(44), surface: 'terminal', viewport: { ...view, isFullscreen: false } })
   await r.drawn()
   expect((await r.find({ type: 'Raster', key: 'clawd' }))?.props).toMatchObject({ columns: 38, rows: 16 })
   expect(await r.find({ type: 'Image' })).toBeUndefined()
-  expect((await r.find({ type: 'Text', text: /여유 · 메모리 58% · 부하 4\.3\/10$/ }))).toBeDefined()
+  expect((await r.find({ type: 'Text', text: /여유 · 메모리 58% 남음 · 부하 4\.3\/10$/ }))).toBeDefined()
   expect(await r.find({ type: 'Text', text: IDLE })).toBeDefined()
   expect(await r.find({ type: 'Raster', key: 'spin' })).toBeDefined()
   await r.unmount()
@@ -243,7 +253,8 @@ test('터미널(fullscreen)에서는 맨 위 왼쪽에 그림, 옆에 요약과 
   const n = await $.ui.mount({ ...PANE(28), surface: 'terminal', viewport: view })
   await n.drawn()
   expect(await n.find({ type: 'Image', key: 'clawd' })).toBeDefined()
-  expect((await n.find({ type: 'Text', text: /여유 · 메모리 58%/ }))).toBeDefined()
+  // 한 줄에 다 안 들어가면(28칸) 메모리 글자를 짧은 쪽으로, 나머지는 끝이 잘린다
+  expect((await n.find({ type: 'Text', text: /여유 · 램 58% 남음 · 부하/ }))).toBeDefined()
   expect(await n.find({ type: 'Text', text: IDLE })).toBeDefined()
   expect(await n.find({ type: 'Raster', key: 'spin' })).toBeDefined()
   await n.unmount()
@@ -254,7 +265,7 @@ test('터미널(fullscreen)에서는 맨 위 왼쪽에 그림, 옆에 요약과 
     await d.drawn()
     expect(await d.find({ type: 'Image' })).toBeUndefined()
     expect(await d.find({ type: 'Text', text: IDLE })).toBeDefined()
-    expect(await d.find({ type: 'Text', text: /여유 · 메모리 58% · 부하 4\.3\/10$/ })).toBeDefined()
+    expect(await d.find({ type: 'Text', text: /여유 · 메모리 58% 남음 · 부하 4\.3\/10$/ })).toBeDefined()
     // 그 밖의 표면은 Raster 가 없어 멈춘 표시 글자
     expect(await d.find({ type: 'Raster' })).toBeUndefined()
     expect(await d.find({ type: 'Text', text: /^✻$/ })).toBeDefined()
@@ -724,7 +735,7 @@ test('/clawd: 끄고 켜기, 테두리·민무늬 고르기', async ($, on) => {
   expect(await slash($)).toMatchObject({ text: 'Clawd 껐어요' })
   expect(await ui.find({ type: 'Image', key: 'clawd' })).toBeUndefined()
   expect(await ui.find({ type: 'Image', key: 'clock' })).toBeDefined() // 시계는 Clawd 와 따로
-  expect(await cap(ui, /여유 · 메모리 58% · 부하 4\.3\/10$/)).toBeDefined() // 꺼지면 예전 첫 줄
+  expect(await cap(ui, /여유 · 메모리 58% 남음 · 부하 4\.3\/10$/)).toBeDefined() // 꺼지면 예전 첫 줄
   expect(await slash($, '테두리')).toMatchObject({ text: 'Clawd 켰어요 (테두리)' })
   expect(await png()).toBe(PNG1)
   expect(await slash($, '민무늬')).toMatchObject({ text: 'Clawd 켰어요 (민무늬)' })
