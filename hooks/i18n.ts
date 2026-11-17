@@ -9,8 +9,8 @@ export type LangPref = 'auto' | Lang
 /** collect.py 가 손으로 띄운 대화형 agy 에 붙이는 이름(코드 값) */
 export const ARGON_TTY = 'argon:interactive'
 
-/** agy(Antigravity CLI) 작업의 꼬리표: 작업 줄·토스트·상태 줄·명령 설명. 공개판 기본은 'agy' */
-let agyTag = 'agy'
+/** agy(Antigravity CLI) 작업의 꼬리표: 작업 줄·토스트·상태 줄·명령 설명. 제품 이름 그대로 'Antigravity'(사용자 2026-11-17) */
+let agyTag = 'Antigravity'
 export const AGY_TAG = agyTag
 
 /** 상태 줄의 작업 수: 0 이 아닌 종류만(둘 다 0 이면 Codex 0). ko 는 'Codex 1 · agy 1', en 은 수를 앞에 '1 Codex · 1 agy' */
