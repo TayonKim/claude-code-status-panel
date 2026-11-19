@@ -23,11 +23,23 @@ const ko = {
   title: '작업 진행판',
   opened: '작업 진행판을 열었어요.',
   descPanel: `작업 진행판(Codex·${AGY_TAG} 작업, Claude·Codex 사용량) 열기`,
-  descClawd: '진행판의 Clawd 켜기·끄기. 인자: 켜기·끄기, 민무늬(기본)·테두리(스티커 바탕), 놀이터 [켜기|끄기], 배경 [켜기|끄기]',
-  hintClawd: '[켜기|끄기|민무늬|테두리|놀이터|배경]',
-  hintPanel: '[언어 <자동|영어|한국어>]',
-  langUsage: '사용법: /status-panel · /status-panel 언어 <자동|영어|한국어>',
+  descClawd: '진행판의 Clawd 켜기·끄기',
+  hintClawd: '[켜기|끄기]',
+  descScene: '패널 아래 풍경: 끄기·작게·크게. 인자 없으면 고르기 창',
+  hintScene: '[끄기|작게|크게]',
+  descSkin: '테마 바꾸기. 인자 없으면 고르기 창',
+  hintSkin: '[이름]',
+  hintPanel: '[언어]',
+  langUsage: '사용법: /status-panel · /status-panel 언어 [자동|영어|한국어]',
+  /** 그 언어 화면에서 고른 값의 이름. 자동은 지금 정해진 언어(이 표의 언어)를 붙인다 */
+  langName: (pref: LangPref): string => (pref === 'auto' ? '자동 (한국어)' : pref === 'ko' ? '한국어' : 'English'),
   langSet: (pref: LangPref): string => (pref === 'auto' ? '언어: 자동 (한국어)' : '언어: 한국어'),
+  // 언어 고르기 창: 선택지 '자동'은 화면 언어로, 한국어·English 는 그 언어 그대로
+  langAsk: (now: string) => `지금 ${now}. 화면 언어를 무엇으로 할까요?`,
+  langHeader: '언어',
+  langAuto: '자동',
+  langKept: (now: string) => `언어 그대로: ${now}`,
+  langNow: (now: string) => `언어: ${now} · /status-panel 언어 [자동|영어|한국어]`,
   // 시간
   durH: (h: number, m: number) => `${h}시간 ${m}분`,
   durM: (m: number) => `${m}분`,
@@ -134,13 +146,28 @@ const ko = {
   alreadyDone: '이미 끝난 작업이에요',
   stopSent: (l: string) => `중지 요청을 보냈어요: ${l}`,
   stopFail: (e: string) => `중지하지 못했어요: ${e}`,
-  // /clawd
-  clawdUsage: '사용법: /clawd [켜기|끄기] · /clawd 민무늬|테두리 · /clawd 놀이터 [켜기|끄기] · /clawd 배경 [켜기|끄기]',
-  yardSet: (on: boolean) => `놀이터 ${on ? '켰어요' : '껐어요'}`,
-  bgSet: (on: boolean) => `놀이터 배경 ${on ? '켰어요' : '껐어요'}`,
-  hiddenOff: ' (Clawd 가 꺼져 있어 지금은 안 보여요)',
-  hiddenYard: ' (놀이터가 꺼져 있어 지금은 안 보여요)',
-  clawdOn: (sticker: boolean) => `Clawd 켰어요 (${sticker ? '테두리' : '민무늬'})`,
+  // /clawd·/skin
+  clawdUsage: '사용법: /clawd [켜기|끄기]',
+  themeSet: (name: string) => `테마: ${name}`,
+  themeNow: (name: string, list: string) => `지금 테마: ${name} · 고를 수 있는 것: ${list}`,
+  themeUnknown: (name: string, list: string) => `없는 테마예요: ${name} · 고를 수 있는 것: ${list}`,
+  themeBad: (name: string) => `테마 그림을 읽지 못했어요: ${name}`,
+  // /skin 고르기 창: 질문은 물음표로 끝낸다($.ui.ask), 머리표는 12자 이하
+  skinAsk: (name: string) => `지금 ${name}. 어떤 테마로 바꿀까요?`,
+  skinHeader: '테마',
+  skinKept: (name: string) => `테마 그대로: ${name}`,
+  skinByName: ' · /skin <이름> 으로 골라요',
+  // /scene: 패널 아래 풍경
+  scene: { off: '끄기', small: '작게', full: '크게' } as Record<'off' | 'small' | 'full', string>,
+  sceneSet: (v: string) => `풍경: ${v}`,
+  sceneAsk: (v: string) => `지금 ${v}. 풍경을 어떻게 할까요?`,
+  sceneHeader: '풍경',
+  sceneKept: (v: string) => `풍경 그대로: ${v}`,
+  sceneNow: (v: string) => `풍경: ${v} · /scene [끄기|작게|크게]`,
+  sceneUsage: '사용법: /scene [끄기|작게|크게]',
+  hiddenOff: ' (Clawd 와 풍경이 꺼져 있어 지금은 안 보여요)',
+  paneClosed: ' (패널이 닫혀 있어 지금은 안 보여요)',
+  clawdOn: 'Clawd 켰어요',
   clawdOff: 'Clawd 껐어요',
 }
 
@@ -150,11 +177,21 @@ const en: Strings = {
   title: 'Status panel',
   opened: 'Opened the status panel.',
   descPanel: `Open the status panel (Codex and ${AGY_TAG} jobs, Claude and Codex usage)`,
-  descClawd: 'Show or hide Clawd. Args: on, off, plain (default), sticker (outlined), yard [on|off] (playground), bg [on|off] (playground background)',
-  hintClawd: '[on|off|plain|sticker|yard|bg]',
-  hintPanel: '[lang <auto|en|ko>]',
-  langUsage: 'Usage: /status-panel · /status-panel lang <auto|en|ko>',
+  descClawd: 'Show or hide Clawd',
+  hintClawd: '[on|off]',
+  descScene: 'Scene at the bottom of the panel: off, small, full. No args opens a picker',
+  hintScene: '[off|small|full]',
+  descSkin: 'Change theme. No args opens a picker',
+  hintSkin: '[name]',
+  hintPanel: '[language]',
+  langUsage: 'Usage: /status-panel · /status-panel language [auto|english|korean]',
+  langName: (pref: LangPref) => (pref === 'auto' ? 'auto (English)' : pref === 'ko' ? '한국어' : 'English'),
   langSet: (pref: LangPref) => (pref === 'auto' ? 'Language: auto (English)' : 'Language: English'),
+  langAsk: (now: string) => `Now ${now}. Which language?`,
+  langHeader: 'Language',
+  langAuto: 'Auto',
+  langKept: (now: string) => `Language unchanged: ${now}`,
+  langNow: (now: string) => `Language: ${now} · /status-panel language [auto|english|korean]`,
   durH: (h: number, m: number) => `${h}h ${m}m`,
   durM: (m: number) => `${m}m`,
   durS: (s: number) => `${s}s`,
@@ -251,12 +288,25 @@ const en: Strings = {
   alreadyDone: 'That job already finished',
   stopSent: (l: string) => `Stop requested: ${l}`,
   stopFail: (e: string) => `Couldn't stop: ${e}`,
-  clawdUsage: 'Usage: /clawd [on|off] · /clawd plain|sticker · /clawd yard [on|off] · /clawd bg [on|off]',
-  yardSet: (on: boolean) => `Playground ${on ? 'on' : 'off'}`,
-  bgSet: (on: boolean) => `Playground background ${on ? 'on' : 'off'}`,
-  hiddenOff: ' (hidden while Clawd is off)',
-  hiddenYard: ' (hidden while the playground is off)',
-  clawdOn: (sticker: boolean) => `Clawd on (${sticker ? 'sticker' : 'plain'})`,
+  clawdUsage: 'Usage: /clawd [on|off]',
+  themeSet: (name: string) => `Theme: ${name}`,
+  themeNow: (name: string, list: string) => `Theme: ${name} · available: ${list}`,
+  themeUnknown: (name: string, list: string) => `No theme named ${name} · available: ${list}`,
+  themeBad: (name: string) => `Couldn't load the theme's pictures: ${name}`,
+  skinAsk: (name: string) => `Now ${name}. Which theme?`,
+  skinHeader: 'Theme',
+  skinKept: (name: string) => `Theme unchanged: ${name}`,
+  skinByName: ' · pick one with /skin <name>',
+  scene: { off: 'Off', small: 'Small', full: 'Full' },
+  sceneSet: (v: string) => `Scene: ${v}`,
+  sceneAsk: (v: string) => `Now ${v}. Which scene size?`,
+  sceneHeader: 'Scene',
+  sceneKept: (v: string) => `Scene unchanged: ${v}`,
+  sceneNow: (v: string) => `Scene: ${v} · /scene [off|small|full]`,
+  sceneUsage: 'Usage: /scene [off|small|full]',
+  hiddenOff: ' (hidden while Clawd and the scene are off)',
+  paneClosed: ' (hidden while the panel is closed)',
+  clawdOn: 'Clawd on',
   clawdOff: 'Clawd off',
 }
 
@@ -272,8 +322,24 @@ export const langFromEnv = (vals: readonly (string | undefined | null)[]): Lang 
 /** 저장값을 고르기로: 모르는 값은 자동 */
 export const prefOf = (v: unknown): LangPref => (v === 'ko' || v === 'en' ? v : 'auto')
 
-/** 명령 인자의 언어 값: auto|en|ko 와 한국어 별칭 자동|영어|한국어. 모르면 null */
+/** 명령 인자·고르기 창 답의 언어 값: auto|english|korean|en|ko 와 자동|영어|한국어(대소문자 무시). 모르면 null */
 export const parseLangArg = (v: string): LangPref | null => {
   const s = v.trim().toLowerCase()
-  return s === 'auto' || s === '자동' ? 'auto' : s === 'en' || s === '영어' ? 'en' : s === 'ko' || s === '한국어' ? 'ko' : null
+  return s === 'auto' || s === '자동' ? 'auto'
+    : s === 'en' || s === 'english' || s === '영어' ? 'en'
+      : s === 'ko' || s === 'korean' || s === '한국어' ? 'ko' : null
 }
+/** '/status-panel' 뒤 언어 인자: 'lang|language|언어 [값]'. 낱말이 아니면 null, 값이 없으면 value 가 '' */
+export const parseLangCmd = (args: string): { value: string } | null => {
+  const m = args.trim().match(/^(lang|language|언어)(?:\s+(\S+))?$/i)
+  return m ? { value: m[2] ?? '' } : null
+}
+export type SceneSize = 'off' | 'small' | 'full'
+/** '/scene' 인자·창 답: 끄기|꺼|off · 작게|small · 크게|full(대소문자 무시). 모르면 null */
+export const parseScene = (v: string): SceneSize | null => {
+  const s = v.trim().toLowerCase()
+  return /^(끄기|꺼|off)$/.test(s) ? 'off' : /^(작게|small)$/.test(s) ? 'small' : /^(크게|full)$/.test(s) ? 'full' : null
+}
+/** 저장 두 칸(yard·bg) → 풍경 값. 끄기 = yard false, 작게 = yard true·bg false, 크게 = 둘 다 true */
+export const sceneOf = (yard: boolean, bg: boolean): SceneSize => (!yard ? 'off' : bg ? 'full' : 'small')
+export const sceneStore = (v: SceneSize) => ({ yard: v !== 'off', bg: v !== 'small' })

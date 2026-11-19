@@ -24,7 +24,9 @@ const SNAP = {
 }
 const USAGE = { at: NOW, windows: [{ usedPct: 31, mins: 10080, resetsAt: NOW + 2 * 86400 }], reached: null, plan: 'pro', resetCredits: 1, credits: [{ title: 'Full reset', expiresAt: NOW + 27 * 86400 + 3600 }] }
 const iso = (s: number) => new Date(s * 1000).toISOString()
-const RATE = [{ kind: 'five_hour', percentUsed: 18.2, resetsAt: iso(NOW + 7800) }, { kind: 'seven_day', percentUsed: 39, resetsAt: iso(NOW + 3 * 86400) }]
+// 리셋 시각은 엔진이 사용량을 물을 때의 시각에서 잰다: 파일을 불러온 때(NOW)에서 재면, 시험이 여럿 같이 돌아 몇 초 늦게 그려질 때
+// 사용 속도(5시간 창 18.2% 사용, 리셋까지 7800초 → 38.5% 경계 근처)가 38% 에서 39% 로 넘어간다(약 5.4초)
+const RATE_AT = (t: number) => [{ kind: 'five_hour', percentUsed: 18.2, resetsAt: iso(t + 7800) }, { kind: 'seven_day', percentUsed: 39, resetsAt: iso(t + 3 * 86400) }]
 
 const BATT = "Now drawing from 'Battery Power'\n -InternalBattery-0 (id=1)\t69%; discharging; 4:28 remaining present: true\n"
 // ps -p <pid> -o etime=,command= 의 답: 기본은 스냅숏의 그 작업 그대로(시작 시각 = at - elapsed)
@@ -58,7 +60,7 @@ const engine = (on: any, calls: PaneCalls, o: { clock?: boolean } = {}) => {
   if (!o.clock) on('clock.every', () => ({ value: undefined }))
   on('session.cwd', () => ({ value: '/Users/someone/project' }))
   on('session.root', () => ({ value: '/Users/someone/project' }))
-  on('session.usage', () => ({ value: { startedAt: 0, context: {}, rateLimits: calls.rate ?? RATE } }))
+  on('session.usage', () => ({ value: { startedAt: 0, context: {}, rateLimits: calls.rate ?? RATE_AT(Math.floor(Date.now() / 1000)) } }))
   on('fs.exists', () => ({ value: false }))
   on('ui.toast', (_: unknown, e: { text: string }) => { calls.toasts.push(e.text); return { value: undefined } })
   on('ui.status', (_: unknown, e: { text?: string }) => { calls.status?.push(e.text); return { value: undefined } })

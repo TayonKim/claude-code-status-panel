@@ -88,7 +88,9 @@ test('잔디 칸 수·단계·그림: 0 인 날은 바탕, 많이 한 날일수�
 })
 
 // ── 패널 ──
-const NOW = Math.floor(Date.now() / 1000)
+// 자료·가짜 시계·기대값을 모두 같은 기준 시각(오늘 낮 12시)에서 만든다: 실제 시각이 자정 직전이어도 가짜 시계가 5분 넘게 가며 날짜가 바뀌지 않게
+const BASE_MS = (() => { const d = new Date(); d.setHours(12, 0, 0, 0); return d.getTime() })()
+const NOW = Math.floor(BASE_MS / 1000)
 const PNG_A = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mO4WR7+HwAGewKnNtauMAAAAABJRU5ErkJggg=='
 const SPRITES = {
   canvas: [38, 32], ground: 30, box: [19, 8], pngSize: [456, 384], palette: { a: '#D97757' },
@@ -98,7 +100,7 @@ const SPRITES = {
 }
 // 오래된 날 → 오늘(지역 날짜). 합계 10시간 24분, 오늘 1시간 42분, 토큰 3.4M
 const lastWeek = () => {
-  const n = new Date(), secs = [3960, 8640, 2160, 11520, 0, 5040, 6120]
+  const n = new Date(BASE_MS), secs = [3960, 8640, 2160, 11520, 0, 5040, 6120]
   return secs.map((s, i) => ({ date: ymdOf(new Date(n.getFullYear(), n.getMonth(), n.getDate() - 6 + i)), secs: s, tokens: 0, turns: 4 }))
 }
 const WEEK = (o: Record<string, unknown> = {}) => JSON.stringify({ at: NOW, partial: false, days: lastWeek(), folders: [], total: { secs: 37440, tokens: 3_400_000, turns: 28 }, ...o })
@@ -150,7 +152,7 @@ const mounted = async ($: any, ready: RegExp, o: { surface?: 'terminal' | 'deskt
   throw new Error('패널이 다 그려지지 않았어요')
 }
 const start = async ($: any, on: any, lang: 'ko' | 'en', week: Calls['week']) => {
-  const clock = mock.clock(on, { now: Date.now() })
+  const clock = mock.clock(on, { now: BASE_MS })
   const calls = engine(on, lang, week)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   return { clock, calls }
@@ -175,7 +177,7 @@ test('한국어: 세션 시작 10초 뒤에 읽고, 다섯 줄(머리·잔디·�
   const img = await ui.find({ type: 'Image', key: 'week' })
   expect(img?.props).toMatchObject({ columns: 42, rows: 1 })
   // 요일: 칸(6칸)마다 가운데, 오늘은 굵은 claude 색
-  const wd = ['일', '월', '화', '수', '목', '금', '토'], n = new Date()
+  const wd = ['일', '월', '화', '수', '목', '금', '토'], n = new Date(BASE_MS)
   const names = Array.from({ length: 7 }, (_, i) => wd[new Date(n.getFullYear(), n.getMonth(), n.getDate() - 6 + i).getDay()]!)
   const label = `  ${names.map(d => `  ${d}  `).join('')}`
   expect(await ui.find({ type: 'Text', text: label })).toBeDefined()

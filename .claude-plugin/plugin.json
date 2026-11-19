@@ -1,11 +1,11 @@
 {
   "name": "status-panel",
-  "version": "0.8.2",
+  "version": "0.9.0",
   "description": "A side pane next to the Claude Code chat: clock and battery, Claude and Codex usage limits with pace, running Codex and Antigravity CLI jobs (view logs, stop), your last 7 days of Claude work, and an animated Clawd",
   "types": "./types/index.d.ts",
   "author": {
     "name": "TayonKim"
   },
-  "repository": "https://github.com/TayonKim/claude-code-status-panel",
+  "repository": "https://github.com/TayonKim/status-panel",
   "license": "MIT"
 }

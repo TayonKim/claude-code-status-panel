@@ -1,0 +1,4 @@
+status-panel includes fan-made pixel art that is not covered by the MIT license in LICENSE:
+- clawd/: Clawd, Anthropic's mascot, drawn after Anthropic's official Clawd stickers.
+- themes/kirby, themes/mario, themes/pokemon: characters owned by Nintendo, HAL Laboratory, Game Freak, Creatures and The Pokémon Company.
+This project is unofficial and not affiliated with or endorsed by any of them. The artwork will be taken down on request: please open an issue at https://github.com/TayonKim/status-panel/issues.

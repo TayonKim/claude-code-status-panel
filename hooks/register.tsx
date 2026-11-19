@@ -1,16 +1,16 @@
 import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
-import type { ClaudeWindow, ClawdAct, ClawdView, ClockView, CodexUsage, Finished, Job, PanelUi, PowerState, Snapshot, WeekStats } from '../types'
+import type { ClaudeOwn, ClaudeView, ClaudeWindow, ClawdAct, ClawdView, ClockView, CodexUsage, Finished, Job, PanelUi, PowerState, Snapshot, WeekStats } from '../types'
 import { BATT_CELLS, BATT_COLS, CLOCK_COLS, CLOCK_ROWS, battColor, battFill, battKey, batterySource, clockSource, dateOf, hmOf, parseBatt } from './clock'
 import {
   CAP, IMG_COLS, IMG_ROWS, RASTER_COLS, RASTER_ROWS, SIDE_TOP_ROWS, SPIN_ACTS, SPIN_SEQ, TOOL_HOLD_MS,
-  OOPS_HOLD_MS, capText, celebrationFor, cellWidth, frameAt, isBusy, isFailure, isFrozen, isNight, msUntilChange, oopsFor, pickAct, pickMode,
-  rasterCells, spinCells, spinGlyph, toolAct,
+  OOPS_HOLD_MS, actShift, capText, celebrationFor, cellWidth, dizzyStart, frameAt, isBusy, isFailure, isFrozen, isNight, msUntilChange, oopsFor, pickAct, pickMode, pickVariant,
+  rasterCells, shiftRows, spinCells, spinGlyph, toolAct, usageAlarm, usageLevel,
 } from './clawd'
 import type { ClawdLive, ClawdMode, Sprites } from './clawd'
-import { AGY_TAG, ARGON_TTY, STR, langFromEnv, parseLangArg, prefOf } from './i18n'
-import type { Lang, LangPref } from './i18n'
+import { AGY_TAG, ARGON_TTY, STR, langFromEnv, parseLangArg, parseLangCmd, parseScene, prefOf, sceneOf, sceneStore } from './i18n'
+import type { Lang, LangPref, SceneSize } from './i18n'
 import { FLOOR_NONE, fitDone, nextFloor } from './layout'
 import { sameJob } from './proc'
 import { PY_CANDIDATES, PY_PROBE, checkArgv, fallbackHost, hostFromProbe, parsePower, powerArgv, pyArgv, stopPlan } from './host'
@@ -20,6 +20,13 @@ import { grassKey, grassPer, grassPng, grassTextTone, parseWeek, todayIdx, token
 import type { Floor } from './layout'
 import { YARD_BG_ROWS, YARD_ROWS, soilRgb, sceneKey, todOf, yardCount, yardFrames, yardScenePng, yardStripPng } from './yard'
 import type { Tod } from './yard'
+import { clawdScene } from './scene'
+import { SHARE_DEAD_TICKS, SHARE_REREAD_S, SHARE_RETRY_S, SLOT_ID_RE, composeSlots, foldSlots, newSlotId, nextOwnAt, ownSlotWins, parseShare, planWrite, shareFileName, shareText, shownUsage } from './share'
+import type { Obs, ShareRead, Slot } from './share'
+import type { YardScene } from './scene'
+import { ASK_MAX, THEME_DEFAULT, bigPng, buildTheme, shownThemeNames, skinAnswerId, skinChoices, themeIdOf, themeLabelOf, themePrefOf } from './theme'
+import type { Theme } from './theme'
+import { THEMES } from '../themes/index'
 
 // No model calls: local scripts are read on a timer, so the pane costs no tokens.
 const PANE = 'status-panel'
@@ -30,8 +37,12 @@ const snapshot = atom({ plugin: 'status-panel', key: 'snapshot' } as const,
   { at: 0, jobs: [], waiting: [], mem: { freePct: null, load: null, cpus: 0 } }, { shape: 'snapshot-1' })
 const finished = atom({ plugin: 'status-panel', key: 'finished' } as const, [], { shape: 'finished-1' })
 const usage = atom({ plugin: 'status-panel', key: 'usage' } as const, { at: 0 } as CodexUsage, { shape: 'usage-1' })
-// Claude 사용량(5시간·주간): 상태 줄과 같은 수치를 엔진에서 받아 Codex 옆에 둔다(사용자 2026-11-16)
-const claude = atom({ plugin: 'status-panel', key: 'claude' } as const, [] as ClaudeWindow[], { shape: 'claude-1' })
+// Claude 사용량(5시간·주간): 상태 줄과 같은 수치를 엔진에서 받아 Codex 옆에 둔다(사용자 2026-11-16). 세션끼리 나눈 값(hooks/share.ts)과
+// 그 값을 올린 세대(claudeOwn2 의 gen)를 함께 둔다: 옛 세대(같은 모듈의 앞 세션·/reload-plugins 전 모듈)의 늦은 쓰기는 콜백이 버린다
+const claudeView = atom({ plugin: 'status-panel', key: 'claudeView' } as const, { gen: -1, wins: [] } as ClaudeView, { shape: 'claudeView-1' })
+// 이 프로세스의 자기 사용량 값·종류마다 받은 시각, 나눔 파일의 칸 이름·쓴 횟수(seq)·세션 세대(hooks/share.ts). 모듈을 다시 읽어도(/reload-plugins) 남게 atom 에 둔다.
+// 0.8.9: 0.8.8 의 키(claudeOwn)와 나눴다. 그 값(파일 시각을 물려받은 at 이 섞여 있다)은 쓰지 않고, 옛 판 모듈이 늦게 그 키에 적어도 이 판의 세대가 처음으로 돌아가지 않는다
+const claudeOwn = atom({ plugin: 'status-panel', key: 'claudeOwn2' } as const, { init: false, wins: [], at: {}, id: '', seq: 0, gen: 0 } as ClaudeOwn, { shape: 'claudeOwn-2' })
 // 펼친 작업과 중지 확인 중인 작업. 작업 이름을 누르면 로그가 펼쳐지고 그 아래에 중지가 있다(작업 버튼 시안 '나')
 const ui = atom({ plugin: 'status-panel', key: 'ui' } as const, { open: [], confirm: null } as PanelUi, { shape: 'ui-1' })
 // 맨 위 시계·배터리(시안 '굵은 선 시계', 2026-11-16). 시각은 분이 바뀔 때만, 배터리는 1분마다 고친다
@@ -99,7 +110,7 @@ let imgLastTick = -99 // 마지막으로 그림 blit 을 보낸 틱
 // starveMs = 놀이터가 이만큼 못 바뀌었으면 큰 Clawd 를 한두 틱 늦추더라도 한 번 바꾼다
 // rend = 다시 그릴 때 그림에 넘길 장면: 'frozen' 지난번 다시 그리기에 넘긴 것 그대로(엔진이 아무것도 보내지 않는다) ·
 //        'shown' 화면에 나가 있는 것(0.5.5~0.5.8) · 'now' 지금 시각의 것(0.5.4 까지)
-// debug = 패널 맨 위에 줄 수·폭을 적는다(측정용). 놀이터 배경은 /clawd 배경 으로 켜고 끈다
+// debug = 패널 맨 위에 줄 수·폭을 적는다(측정용). 아래 풍경(놀이터 띠)은 /scene 으로 바꾼다
 const tune = { gap: 2, yardMs: 400, starveMs: 1500, yard: true, big: true, rend: 'frozen' as 'frozen' | 'shown' | 'now', debug: false }
 // 다시 그리기에 넘긴 장면(엔진이 기억하는 props). 화면에 나가 있는 장면(drawnFrame·yardShown·clockShown·battShown)과 따로 둔다.
 // 엔진은 props 가 지난번과 같으면 그림을 건드리지 않는데, 달라지면(화면의 장면을 넘겨도) 그림을 다시 보내고,
@@ -110,6 +121,7 @@ let yardRendPng = ''
 let clockRend = ''
 let battRend = ''
 let battAltRend = ''
+const rasterCache = new Map<string, string>()
 let lastGeo = '' // 패널 폭·스크롤·터미널 크기. 바뀌면 그림을 지금 장면으로 새로 그린다
 let yardLastAt = 0
 let floor: Floor = FLOOR_NONE // 놀이터 바닥 높이(layout.ts nextFloor)
@@ -117,9 +129,12 @@ const FLOOR_RAISE_MS = 10 * 60_000
 // 바닥 아래 빈 줄이 이보다 많으면(창을 키운 때 등) 흙으로 채우지 않고 놀이터를 한 번 내린다. 턴마다 생기는 1~3줄(작업자 줄·스피너)은 채운다
 const FILL_MAX_ROWS = 3
 const imgFree = () => !imgBusy && tickNo - imgLastTick >= tune.gap
+// 세션이 새로 열릴 때마다 올린다: 앞 세션에서 답을 못 받은 blit 이 새 세션의 차례(imgBusy·blitting)를 풀거나 막지 못하게
+let sessGen = 0
 const imgBlit = async ($: any, args: Record<string, unknown>) => {
   imgBusy = true; imgLastTick = tickNo
-  try { return await $.ui.blit({ requestId: PANE, ...args }) } finally { imgBusy = false }
+  const sg = sessGen
+  try { return await $.ui.blit({ requestId: PANE, ...args }) } finally { if (sg === sessGen) imgBusy = false }
 }
 // 진행판에서 중지시킨 작업(pid). '최근 끝남'에 '중지함'으로 적는다
 const stopped = new Set<number>()
@@ -127,11 +142,115 @@ const stopped = new Set<number>()
 // ── Clawd(맨 위 왼쪽 마스코트, 시안 '가'안 2026-11-16) ──
 // 설명 글자가 바뀔 때만 atom 을 고치고, 움직임의 프레임은 모듈 변수 + $.ui.blit 로 바꾼다(다시 그리기 없음)
 const clawd = atom({ plugin: 'status-panel', key: 'clawd' } as const,
-  { on: true, look: 'plain', act: 'idle', raster: false, ready: 0 } as ClawdView, { shape: 'clawd-1' })
+  { on: true, act: 'idle', raster: false, ready: 0 } as ClawdView, { shape: 'clawd-1' })
 const CLAWD_KEY = 'clawd'
 const CLAWD_TICK_MS = 100
 const AGENTS_EVERY_MS = 5000
 let sprites: Sprites | null = null
+// 테마(hooks/theme.ts): 큰 마스코트(sprites)·놀이터 친구(friends)·놀이터 배경(scene). 기본 clawd 는 친구도 sprites 그대로
+let friends: Sprites | null = null
+let scene: YardScene = clawdScene
+let themeId = THEME_DEFAULT
+// 테마를 바꾼 뒤 큰 마스코트를 한 번 blit 해야 함(그림 차례를 지켜 틱이 보낸다). 다시 그리기로 Image source 를 바꾸지 않으려고
+// 다시 그릴 때는 지난번에 넘긴 PNG(rendPng)를 그대로 넘긴다
+let bigDirty = false
+let rendPng = ''
+let shownPng = '' // 화면에 나가 있는 큰 마스코트 PNG(blit 이 성공했거나 다시 그리기가 새로 넘긴 것). tune.rend 'shown' 이 다시 그릴 때 넘긴다
+let yardScene: YardScene = clawdScene // 화면에 나가 있는 놀이터 그림의 배경(아래 흙 색을 그 그림에 맞춘다)
+let fillShown = -1 // 지난 다시 그리기에 칠한 흙 색(흙 줄이 없으면 -1)
+let themeGen = 0 // 테마를 바꿀 때마다 올린다: 바꾸기 전에 떠난 blit 의 답이 bigDirty 를 지우지 못하게
+let clawdLoaded: Promise<void> = Promise.resolve() // 세션 시작 때 저장된 설정·테마 읽기
+let saveChain: Promise<void> = Promise.resolve() // $.store 'clawd' 쓰기 차례
+let themeCmd = 0 // '/skin' 이 테마 파일을 읽는 사이 다른 '/skin' 이 오면 늦게 끝난 앞 것은 적용하지 않는다
+const applyTheme = (t: Theme) => {
+  sprites = t.sprites; friends = t.friends; scene = t.scene; themeId = t.id; themeGen++
+  rasterCache.clear()
+}
+const readJson = async ($: any, path: string): Promise<unknown> => JSON.parse(String(await $.fs.read(path)))
+// 기본 clawd 는 0.8.1 그대로 clawd/sprites.json 하나. 다른 테마는 themes/<id>/sprites.json(+ friends.json)
+const loadTheme = async ($: any, id: string): Promise<Theme> => {
+  if (id === THEME_DEFAULT) {
+    const sp = (await readJson($, `${$.plugin.root}/clawd/sprites.json`)) as Sprites
+    return { id, sprites: sp, friends: sp, scene: clawdScene }
+  }
+  const dir = `${$.plugin.root}/themes/${id}`
+  const big = await readJson($, `${dir}/sprites.json`)
+  // friends.json 이 없으면 큰 마스코트 그대로. 있는데 못 읽거나 깨졌으면 그대로 던져 '못 읽었어요' 로 알린다
+  let has = false
+  try { has = !!(await $.fs.exists(`${dir}/friends.json`)) } catch { has = false }
+  const fr = has ? await readJson($, `${dir}/friends.json`) : undefined
+  return buildTheme(id, THEMES[id], big, fr)
+}
+const themeLabel = (id: string) => themeLabelOf(id, THEMES, curLang)
+// $.store 'clawd' 저장(/clawd·/skin 이 같이 쓴다). 저장 직전에 저장된 값을 다시 읽어 이 명령이 바꾼 것만 얹는다
+// (테마 파일을 기다리는 사이 다른 명령이 바꾼 것을 옛 값으로 덮지 않게). atom 은 명령이 시작할 때 읽은 값이 돌아올 수 있어 $.store 를 본다.
+// 저장된 값이 없거나 이상하면 명령이 시작할 때 읽은 값(fb). 테마는 저장하는 때의 themeId.
+// 저장은 모듈 차례(saveChain)로 하나씩: 두 명령이 같은 옛 값을 읽고 겹쳐 쓰지 않게
+// 테두리(sticker) 모양은 0.8.7 에서 없앴다: 저장된 옛 look 값은 읽지도 쓰지도 않는다(새로 저장하면 빠진다)
+type ClawdPref = Partial<{ on: boolean; bg: boolean; yard: boolean }>
+type ClawdBase = { on: boolean; bg: boolean; yard: boolean }
+const saveClawd = ($: any, sg: number, p: ClawdPref, fb: ClawdBase) => {
+  const run = saveChain.then(async () => {
+    if (sg !== sessGen) return // 앞 세션의 명령: 새 세션이 읽은 설정을 덮지 않는다
+    let st: { on?: unknown; bg?: unknown; yard?: unknown } = {}
+    try { st = ((await $.store.get('clawd')) ?? {}) as typeof st } catch { /* 이 명령이 읽은 값으로 */ }
+    if (sg !== sessGen) return // 읽는 사이 새 세션이 열렸다
+    const was = {
+      on: typeof st.on === 'boolean' ? st.on : fb.on,
+      bg: typeof st.bg === 'boolean' ? st.bg : fb.bg, yard: typeof st.yard === 'boolean' ? st.yard : fb.yard,
+    }
+    try { await $.store.set('clawd', { ...was, ...p, theme: themeId }) } catch { /* 이번 세션에만 적용 */ }
+  })
+  saveChain = run.catch(() => { /* 다음 저장은 그대로 */ })
+  return run
+}
+// 테마 바꾸기(/skin): 다시 그리지 않고 큰 마스코트·놀이터 띠를 그림 차례대로 한 번씩 blit
+const switchTheme = async ($: any, sg: number, id: string, fb: ClawdBase): Promise<{ text: string }> => {
+  // 앞 세션의 명령(창·읽기를 기다리는 사이 새 세션이 열림): 새 세션의 차례(themeCmd)를 건드리지 않는다
+  if (sg !== sessGen) return { text: S.themeSet(themeLabel(themeId)) }
+  // 답 끝의 안내는 답하는 때의 상태로(테마를 읽는 사이 /clawd 끄기·/scene 끄기·패널 닫기가 올 수 있다)
+  const hidden = async () => (!clawdOn && (await read($, clawd)).yard === false ? S.hiddenOff : await closedNote($))
+  // 고를 때마다 차례를 올린다: 지금 테마를 다시 골라도 읽던 앞 명령은 적용하지 않는다(뒤에 고른 것이 이긴다)
+  const prev = themeCmd, my = ++themeCmd
+  if (id === themeId && sprites) return { text: `${S.themeSet(themeLabel(id))}${await hidden()}` }
+  let t: Theme
+  try { t = await loadTheme($, id) } catch {
+    // 못 읽었으면 이 명령은 없던 것으로: 읽던 앞 명령이 있으면 그것이 적용된다
+    // 읽는 사이 새 세션이 열렸으면 새 세션의 차례·화면(토스트)을 건드리지 않는다
+    if (sg !== sessGen) return { text: S.themeBad(themeLabel(id)) }
+    if (my === themeCmd) themeCmd = prev
+    const msg = S.themeBad(themeLabel(id)); try { $.ui.toast(msg) } catch { /* 글자로만 */ } return { text: msg }
+  }
+  if (sg !== sessGen) { if (my === themeCmd) themeCmd = prev; return { text: S.themeSet(themeLabel(themeId)) } } // 읽는 사이 새 세션이 열렸다
+  // 읽는 사이 다른 테마를 골랐다: 그쪽이 적용한다. 답은 지금 적용된 테마로
+  if (my !== themeCmd) return { text: `${S.themeSet(themeLabel(themeId))}${await hidden()}` }
+  applyTheme(t)
+  bigDirty = true
+  skip = 0 // 멈춘 동안(1초에 한 번)이라도 바로 보낸다
+  await update($, clawd, c => (c.ready ? c : { ...c, ready: vnow })) // 앞 테마를 못 읽어 그림이 없던 때
+  if (yardShown) yardShown = '~theme' // 화면의 띠는 옛 테마: 다음 놀이터 차례에 새 띠를 한 장 보낸다(다시 그릴 때는 지난번 PNG 그대로)
+  await saveClawd($, sg, {}, fb)
+  return { text: `${S.themeSet(themeLabel(id))}${await hidden()}` }
+}
+// 패널이 닫혀 있으면 답 끝에 붙이는 안내. $.ui.panes() 를 못 읽으면 붙이지 않는다
+const closedNote = async ($: any) => {
+  try {
+    const open = (await $.ui.panes()).some((p: { id: string; isShown?: boolean; isPlaced?: boolean }) => p.id === PANE && p.isShown !== false && p.isPlaced !== false)
+    return open ? '' : S.paneClosed
+  } catch { return '' }
+}
+// 이 플러그인이 띄운 고르기 창($.ui.ask: /skin·/scene·언어). 창은 AskUserQuestion 도구 호출로 열려 tool.call 훅이 '대답 기다림'으로 보고,
+// 그 호출이 거절·실패로 끝나도 '앗'을 세우지 않는다(pickers 가 0 보다 크면). 결과: 고른 글자 · 사람이 닫음 · 그 밖(못 띄움·거절·오류)
+let pickers = 0
+// 엔진은 모든 실패를 'no answer (<사유>)' 로 감싼다: 공통 머리말이 아니라 사유로 가른다(검수 11-18 #1)
+const DISMISS_RE = /\b(dismissed|declined|cancell?ed|aborted)\b|doesn't want to proceed/i
+type Picked = { kind: 'answer'; text: string } | { kind: 'dismissed' } | { kind: 'failed' }
+const askPick = async ($: any, question: string, options: string[], header: string): Promise<Picked> => {
+  pickers++
+  try { return { kind: 'answer', text: String(await $.ui.ask(question, { options, header })) } } catch (err) {
+    return DISMISS_RE.test(String(err)) ? { kind: 'dismissed' } : { kind: 'failed' }
+  } finally { pickers-- }
+}
 // 메인 루프의 활동(훅이 적기만 하고, 동작은 clawdTick 이 고른다)
 const live = {
   tools: new Map<string, { name: string; at: number }>(),
@@ -143,8 +262,17 @@ const live = {
   asks: new Map<string, number>(),
   subagents: false,
   jobs: false,
-  lowUsage: false,
+  // 사용량 경고 반응(clawd.ts usageAlarm): 창마다 넘은 단계, 아직 못 보인 경고(한가해지면 보인다), 보이는 중인 10초
+  usageLevels: {} as Record<string, number>,
+  dizzyDue: false,
+  dizzy: null as ClawdLive['dizzy'],
   lastActivity: Date.now(),
+}
+/** 앞 세션의 활동 기록을 비운다(새 세션이 앞 세션의 도구·창·턴을 이어 보이지 않게, 검수 11-18 #3) */
+const liveReset = () => {
+  live.tools.clear(); live.asks.clear(); live.turn = null; live.hold = null; live.celebrate = null; live.oops = null
+  live.usageLevels = {}; live.dizzyDue = false; live.dizzy = null
+  turnGen++
 }
 // Clawd 의 시계(ms). 훅·render 가 기다리지 않고 읽게 모듈 변수로 둔다: 시작할 때 $.clock.now() 에 한 번 맞추고(base),
 // 그 뒤로는 실제로 흐른 시간을 더한다(틱이 밀려도 맞다). 틱마다 100ms 는 가게 해서 시험의 가짜 시계도 따라가고, 뒤로는 가지 않는다
@@ -162,7 +290,8 @@ let actT0 = vnow
 let shownAct: ClawdAct = 'idle'
 let drawnKind: 'image' | 'raster' | null = null
 let drawnFrame = -1
-let drawnLook: 'sticker' | 'plain' = 'plain'
+let drawnDx = 0 // 화면에 나가 있는 큰 캐릭터의 가운데 정렬 칸 수(clawd.ts actShift). 장면이 같아도 dx 가 다르면 새 그림을 보낸다
+let rendDx = 0 // 다시 그리기에 넘긴 장면의 dx
 let probe = false // 새로 그린 뒤 한 번은 같은 장면이라도 blit 해서 그림을 그릴 수 있는지 본다
 let probeWait = 0 // 그린 것이 화면에 붙을 틈을 주려고 확인을 몇 틱 미룬다
 let probeDenies = 0 // 새로 그릴 때마다 확인 blit 이 거부된 횟수. 세 번 잇달아 거부되면 그림을 못 그리는 터미널로 본다
@@ -184,24 +313,24 @@ const spinTick = async ($: any, act: ClawdAct) => {
   const want = spinCells(act, spinIdx)
   if (want === spinDrawn) return
   spinBlitting = true
-  const gen = drawGen
+  const gen = drawGen, sg = sessGen
   try {
     const r = await $.ui.blit({ requestId: PANE, key: SPIN_KEY, cells: want })
     if (gen !== drawGen) return // 기다리는 사이에 새로 그려졌다
     if (r && r.deny) spinMounted = false // 다시 그려질 때까지 쉰다
     else spinDrawn = want
-  } catch { if (gen === drawGen) spinMounted = false } finally { spinBlitting = false }
+  } catch { if (gen === drawGen) spinMounted = false } finally { if (sg === sessGen) spinBlitting = false }
 }
-const rasterCache = new Map<number, string>()
-const cellsOf = (f: number) => {
-  let c = rasterCache.get(f)
-  if (!c && sprites) { c = rasterCells(sprites.frames[f] ?? [], sprites.palette); rasterCache.set(f, c) }
+const cellsOf = (f: number, dx: number) => {
+  const k = `${f}:${dx}`
+  let c = rasterCache.get(k)
+  if (!c && sprites) { c = rasterCells(shiftRows(sprites.frames[f] ?? [], dx, sprites.canvas[0]), sprites.palette); rasterCache.set(k, c) }
   return c ?? ''
 }
-const pngOf = (look: ClawdView['look'], f: number) => sprites?.png[look][f] ?? sprites?.png[look][0] ?? ''
+const pngOf = (f: number, dx: number) => (sprites ? bigPng(sprites, f, dx) : '')
 const liveNow = (now: number): ClawdLive => ({
   now, tools: [...live.tools.values()], hold: live.hold, turn: live.turn, celebrate: live.celebrate,
-  subagents: live.subagents, jobs: live.jobs, lowUsage: live.lowUsage, lastActivity: live.lastActivity,
+  subagents: live.subagents, jobs: live.jobs, dizzy: live.dizzy, lastActivity: live.lastActivity,
   ask: live.asks.size > 0, oops: live.oops, night: isNight(now),
 })
 const askKey = (loop: string | undefined, tool: string) => `${loop ?? ''}\u0000${tool}`
@@ -215,8 +344,24 @@ const askClear = (loop: string | undefined) => {
   const pre = `${loop ?? ''}\u0000`
   for (const k of [...live.asks.keys()]) if (k.startsWith(pre)) live.asks.delete(k)
 }
+// 지금 동작의 states 항목: 손님 틀이 있으면 동작 시작(actT0)에 고른 것(pickVariant). 같은 동작이 이어지는 동안은 같은 것
+let varMemo: { states: Sprites['states'] | null; act: ClawdAct; t0: number; key: string } = { states: null, act: 'idle', t0: NaN, key: 'idle' }
+const curState = () => {
+  if (!sprites) return undefined
+  const m = varMemo
+  if (m.states !== sprites.states || m.act !== curAct || m.t0 !== actT0) {
+    varMemo = { states: sprites.states, act: curAct, t0: actT0, key: pickVariant(sprites.states, curAct, actT0) }
+  }
+  return sprites.states[varMemo.key] ?? sprites.states[curAct]
+}
+/** 지금 동작의 가운데 정렬 칸 수: 손님 틀이면 그 키, 없는 키면 본래 동작으로(curState 와 같은 것) */
+const curDx = () => {
+  if (!sprites) return 0
+  curState()
+  return actShift(sprites, sprites.states[varMemo.key] ? varMemo.key : curAct)
+}
 const curFrame = (now: number, l: ClawdLive) => {
-  const st = sprites?.states[curAct]
+  const st = curState()
   return st ? frameAt(st, actT0, now, isFrozen(l)) : 0
 }
 // 훅 안의 관찰 코드는 어떤 예외도 밖으로 내보내지 않는다(도구·턴에 영향 없게)
@@ -228,18 +373,48 @@ const checkAgents = async ($: any) => {
   } catch { /* 못 읽으면 앞 값 */ }
 }
 // 놀이터: 어느 마리든 장면이 바뀌었고 yardMs 가 지났으면 띠 한 장을 blit(보냈으면 true). 거부되면(칸이 없음) 다시 그려질 때까지 쉰다
+// 거부·실패하면 화면의 띠는 그대로라 yardShown 을 되돌려 다음 차례에 다시 보낸다. 창이 안 붙어 있는 거부(mount·no-surface)도
+// 한 번에 쉬지 않고 간격을 늘리다가 DENY_GIVE_UP 번째에 쉰다(yardN = 0 이면 다음 다시 그리기가 source 를 새로 넘겨 번쩍인다)
+let yardDenies = 0
+let yardRetryAt = 0 // 거부된 뒤 다시 해 볼 시각(yardLastAt 과 따로 둔다: 다시 그리기·새 세션이 비운다)
+// 놀이터를 새로 그릴 때(새 세션·다시 그리기에서 source 를 새로 넘길 때)마다 올린다: 그 전에 떠난 blit 의 답은 화면의 띠·흙 색을 건드리지 않는다
+let yardGen = 0
 const yardTick = async ($: any, now: number, frozen: boolean): Promise<boolean> => {
-  if (!tune.yard || !yardN || !sprites || now - yardLastAt < tune.yardMs) return false
-  const fr = yardFrames(sprites, yardN, now, frozen), tod = todOf(new Date(now))
+  // tune.yard 가 꺼져 있어도 테마를 바꾼 뒤의 한 장은 보낸다
+  if ((!tune.yard && yardShown !== '~theme') || !yardN || !friends || now - yardLastAt < tune.yardMs || now < yardRetryAt) return false
+  const fr = yardFrames(friends, yardN, now, frozen), tod = todOf(new Date(now))
   const key = yardBg ? sceneKey(fr, now, frozen, tod) : fr.join(',')
   if (key === yardShown) return false
+  const was = yardShown, sc = scene
   yardShown = key; yardLastAt = now
-  const gen = drawGen
+  const gen = drawGen, yg = yardGen, sg = sessGen
+  let ok = false, deny = ''
   try {
-    const png = yardBg ? yardScenePng(sprites, fr, yardCols, now, frozen, tod) : yardStripPng(sprites, fr, yardCols)
+    const png = yardBg ? yardScenePng(friends, fr, yardCols, now, frozen, tod, sc) : yardStripPng(friends, fr, yardCols)
     const r = await imgBlit($, { key: 'yard', source: { png } })
-    if (r && r.deny && gen === drawGen) yardN = 0
-  } catch { if (gen === drawGen) yardN = 0 }
+    ok = !(r && r.deny); deny = r && r.deny ? String(r.deny) : ''
+  } catch { ok = false }
+  if (sg !== sessGen || yg !== yardGen) return true // 기다리는 사이 새 세션이 열렸거나 놀이터를 새로 그렸다: 이 답은 옛 띠의 것
+  // 큰 캐릭터를 꺼 두면 그 확인 blit 이 없다: 그때는 풍경 blit 의 거부도 시계·배터리처럼 '그림을 못 그리는 터미널' 판정에 넣는다
+  // (켜져 있을 때는 큰 캐릭터의 확인이 맡는다: 풍경까지 세면 확인 세 번보다 먼저 물러난다)
+  // 같은 띠가 그대로인 단순 다시 그리기(drawGen 만 오름)로는 이 거부를 버리지 않는다: 띠를 새로 넘겼으면 위 yardGen 이 거른다
+  if (!ok && deny && !clawdOn) await imgDenied($, deny)
+  if (ok) {
+    yardDenies = 0; yardRetryAt = 0
+    imgDenies = 0 // 풍경이 그려졌다: 거부가 잇달아 온 것이 아니다(거부·성공이 번갈아 오면 글자 방식으로 물러나지 않는다)
+    if (yardBg) {
+      yardScene = sc
+      // 흙 줄이 깔려 있고 색이 달라졌으면 글자 칸만 다시 그린다(그림 source 는 그대로라 그림은 다시 가지 않는다)
+      const soil = soilRgb(tod, sc)
+      if (fillShown >= 0 && soil !== fillShown) await update($, clawd, c => ({ ...c, soil }))
+    }
+    return true
+  }
+  if (yardShown === key) yardShown = was // 이 띠는 화면에 안 나갔다
+  if (gen === drawGen) {
+    if (++yardDenies >= DENY_GIVE_UP) { yardDenies = 0; yardN = 0 } // 다시 그려질 때까지 쉰다
+    else yardRetryAt = now + Math.min(10_000, 1000 * 2 ** (yardDenies - 1))
+  }
   return true
 }
 // 시계·배터리·잔디 blit 이 거부됐을 때: 창이 안 붙어 있어서(mount·no-surface)가 아니고 alt·자리 표시·못 읽음 거부면 바로,
@@ -296,7 +471,7 @@ const clawdTick = async ($: any) => {
   tickNo++
   const now = nowMs()
   const tookSlot = await clockBattTick($) // Clawd 가 꺼져 있어도 시계·배터리는 바뀐다
-  if (!clawdOn || !sprites) return
+  if (!sprites) return
   if (skip > 0) { skip--; return }
   if (now - lastAgents >= AGENTS_EVERY_MS) { lastAgents = now; void checkAgents($) }
   const l = liveNow(now)
@@ -304,23 +479,49 @@ const clawdTick = async ($: any) => {
   if (live.hold && now >= live.hold.until) live.hold = null
   if (live.celebrate && now >= live.celebrate.until) live.celebrate = null
   if (live.oops && now >= live.oops.until) live.oops = null
+  if (live.dizzy && now >= live.dizzy.until) live.dizzy = l.dizzy = null
+  // 미뤄 둔 사용량 경고: 한가한 동작이 될 때 10초(바쁘면 계속 미룬다)
+  // 띄우는 순간에 지금 화면에 올린 사용량(claudeShown)에 90% 넘는 창이 아직 있는지 본다(바쁜 사이 리셋됐거나 내려갔으면 버린다)
+  if (live.dizzyDue && !claudeShown.some(w => usageLevel(w.usedPct) > 0)) live.dizzyDue = false
+  if (live.dizzyDue) {
+    const d = dizzyStart(l)
+    if (d) {
+      // 띄우는 순간 화면 atom 의 지금 값과 세대도 본다: 이 모듈이 올린 낮은 값의 응답만 늦어 claudeShown 이 아직 옛 높은 값일 수 있다
+      const sg = sessGen, v = await read($, claudeView)
+      if (sg !== sessGen || !live.dizzyDue) { /* 기다리는 사이 새 세션 */ }
+      else if (ownerGen >= 0 && v.gen > ownerGen) live.dizzyDue = false // 더 새 세대가 화면을 가졌다
+      else if (ownerGen >= 0 && v.gen < ownerGen) { /* 이 세대의 값이 아직 안 올라갔다: 다음 틱에 다시 본다 */ }
+      else if (!v.wins.some(w => usageLevel(w.usedPct) > 0)) live.dizzyDue = false
+      else { live.dizzy = l.dizzy = d; live.dizzyDue = false }
+    }
+  }
+  // 큰 캐릭터를 꺼 두어도 아래 풍경은 /scene 값대로 움직인다(사용자 2026-11-18): 그림 차례가 비었으면 풍경만
+  if (!clawdOn) {
+    const frozenOff = isFrozen(l)
+    if (frozenOff) skip = 9
+    if (!tookSlot && imgFree()) await yardTick($, now, frozenOff)
+    return
+  }
   const act = pickAct(l)
   if (act !== curAct) { curAct = act; actT0 = now }
   // 설명 글자: 적어 둔 것과 달라졌을 때만 atom 을 고친다(글자가 같은 동작끼리는 다시 그리지 않는다)
   if (CAP[shownAct].text !== CAP[act].text || CAP[shownAct].color !== CAP[act].color) {
     shownAct = act
-    await update($, clawd, c => ({ ...c, act }))
+    // 적은 세션의 세대를 함께 담고, 콜백 안에서 세대를 본다: 앞 세션·/reload-plugins 전 모듈의 늦은 쓰기('사용량이 바닥나요' 등)가 다시 불려도 새 세션의 글자를 덮지 못한다
+    const sg = sessGen, og = ownerGen
+    if (!ownerLost) await update($, clawd, c => (sg !== sessGen || staleAct(c, og) ? c : { ...c, act, ...(og >= 0 ? { gen: og } : {}) }))
     if (!clawdOn) return // 기다리는 사이에 꺼졌다
   }
   if (SPIN_ACTS.has(act)) spinIdx = (spinIdx + 1) % SPIN_SEQ.length
   void spinTick($, act)
   const frozen = isFrozen(l)
-  if (frozen) skip = 9 // 멈춘 동안은 1초에 한 번만 본다
+  if (frozen && !bigDirty && yardShown !== '~theme') skip = 9 // 멈춘 동안은 1초에 한 번만 본다(테마를 바꾼 뒤 두 그림을 보낼 때까지는 빼고)
   if (tookSlot) return
-  const f = curFrame(now, l)
-  // 큰 Clawd 가 이번 틱에 바꿀지. 그림 방식은 그림 차례(imgFree)가 비어야 하고, 글자 방식(Raster)은 차례와 상관없다
+  const f = curFrame(now, l), dx = curDx()
+  // 큰 Clawd 가 이번 틱에 바꿀지. 그림 방식은 그림 차례(imgFree)가 비어야 하고, 글자 방식(Raster)은 차례와 상관없다.
+  // 가운데 정렬 칸 수(dx)가 바뀌는 것도 장면이 바뀌는 것과 같은 길(blit, 차례대로)로 보낸다
   let bigGo = false
-  if (drawnKind && !blitting && (f !== drawnFrame || probe) && (tune.big || probe)) {
+  if (drawnKind && !blitting && (f !== drawnFrame || dx !== drawnDx || probe || bigDirty) && (tune.big || probe || bigDirty)) {
     if (probe && probeWait > 0) probeWait--
     else if (backoff > 0) backoff--
     else bigGo = drawnKind !== 'image' || imgFree()
@@ -330,19 +531,20 @@ const clawdTick = async ($: any) => {
   if (!bigGo) {
     // 큰 Clawd 가 쓰지 않는 틱은 놀이터 차례. 다만 큰 Clawd 가 곧(gap 안에) 바뀔 참이면 자리를 비워 둔다(오래 굶었으면 예외)
     if (imgFree()) {
-      const soon = drawnKind === 'image' && tune.big ? msUntilChange(sprites.states[curAct], actT0, now, frozen) : Infinity
+      const soon = drawnKind === 'image' && tune.big ? msUntilChange(curState(), actT0, now, frozen) : Infinity
       if (soon >= tune.gap * CLAWD_TICK_MS || now - yardLastAt >= tune.starveMs) await yardTick($, now, frozen)
     }
     return
   }
   blitting = true
-  const gen = drawGen
-  const kind = drawnKind, wasProbe = probe
+  const gen = drawGen, sg = sessGen
+  const kind = drawnKind, wasProbe = probe, tg = themeGen
   if (kind === 'image') { imgBusy = true; imgLastTick = tickNo }
+  const png = kind === 'image' ? pngOf(f, dx) : ''
   try {
     const r = kind === 'image'
-      ? await $.ui.blit({ requestId: PANE, key: CLAWD_KEY, source: { png: pngOf(drawnLook, f) } })
-      : await $.ui.blit({ requestId: PANE, key: CLAWD_KEY, cells: cellsOf(f) })
+      ? await $.ui.blit({ requestId: PANE, key: CLAWD_KEY, source: { png } })
+      : await $.ui.blit({ requestId: PANE, key: CLAWD_KEY, cells: cellsOf(f, dx) })
     if (gen !== drawGen) return // 기다리는 사이에 새로 그려졌다: 이 답은 옛 그림의 것이라 버린다
     if (r && r.deny) {
       // 터미널이 그림을 못 그려 alt 를 그리는 중이면 글자 방식으로 바꾼다. 거부 문구가 달라도, 새로 그린 직후의 확인이
@@ -355,8 +557,11 @@ const clawdTick = async ($: any) => {
         await update($, clawd, c => ({ ...c, raster: true }))
       } else if (++denyStreak >= DENY_GIVE_UP) drawnKind = null // 창이 닫혔거나 가려진 것으로 보고, 다시 그려질 때까지 쉰다
       else backoff = Math.min(100, 10 * 2 ** (denyStreak - 1))
-    } else { drawnFrame = f; probe = false; backoff = 0; probeDenies = 0; denyStreak = 0 }
-  } catch { if (gen === drawGen) backoff = 50 } finally { blitting = false; if (kind === 'image') imgBusy = false }
+    } else {
+      drawnFrame = f; drawnDx = dx; probe = false; if (tg === themeGen) bigDirty = false; backoff = 0; probeDenies = 0; denyStreak = 0
+      if (kind === 'image') shownPng = png
+    }
+  } catch { if (gen === drawGen) backoff = 50 } finally { if (sg === sessGen) { blitting = false; if (kind === 'image') imgBusy = false } }
 }
 // 이보다 오래 갱신이 없으면 바닥에 경고를 띄운다. 평소에는 바닥 줄이 없다(사용자 2026-11-16)
 const STALE_S = 30
@@ -393,17 +598,160 @@ const leftColor = (left: number) => (left <= 10 ? 'error' : left <= 30 ? 'warnin
 const claudeName = (kind: string) => S.claudeWin[kind] ?? kind
 const RULE = '─'.repeat(30)
 
-// Claude 사용량 창을 읽어 달라졌을 때만 적는다(비용 없는 호출)
-const readClaude = async ($: any) => {
+// 세션끼리 나누는 사용량(hooks/share.ts 머리 주석이 규칙): 세션이 시작할 때 한 번 정하는 것(ShareCtx)과, 그 세션 동안의 기억.
+// sg: 이 모듈 안의 세션 세대(기다림 없이 비교), gen·id: atom(claudeOwn2)의 세대와 이 프로세스의 칸 이름(/reload-plugins 뒤의 새 모듈과도 가른다),
+// path: 파일 자리(HOME·CLAUDE_CONFIG_DIR 로 세션 시작 때 한 번 만든 약속. 기다리는 사이 다른 세션이 바꿀 수 없다. '' 이면 파일로 나누지 않는다)
+type ShareCtx = { sg: number; gen: number; id: string; path: Promise<string> }
+let shareGen = 0
+// 파일은 크기·시각이 바뀌었을 때만 다시 읽는다(5초마다 통째로 읽지 않게. 그래도 SHARE_REREAD_S 마다 한 번은 본문을 다시 읽는다).
+// 자기가 쓴 직후에는 기억을 비워 다음 틱에 한 번 다시 읽는다
+// (쓴 뒤의 stat 은 그사이 다른 세션이 쓴 파일의 것일 수 있어, 그것으로 자기 내용을 인증하면 남의 값을 계속 못 본다)
+let shareCache: { key: string; read: ShareRead; at: number } | null = null
+let shareMem: Slot[] = [] // 이 세션이 본 칸들(칸마다 가장 높은 seq 판). 파일을 못 읽는 틱에도 화면은 이것을 지금 시각으로 다시 본다
+let shareBad = { key: '', n: 0 } // 같은 크기·시각으로 잇달아 깨져 읽힌 횟수(그 사이 다른 결과가 끼면 0 부터)
+let shareRetryAt = 0 // 쓰기가 실패하면 실패한 시각 + SHARE_RETRY_S 까지 다시 쓰지 않는다
+let shareWriting = false // 파일 쓰기가 도는 중(틱과 따로 돈다: 한 번에 하나)
+let claudeShown: ClaudeWindow[] = [] // 이 세션이 화면 atom 에 실제로 올린 사용량. 미뤄 둔 경고는 띄우는 순간 이것을 본다
+let ownerGen = -1 // 이 모듈의 지금 세션이 가진 세대(claudeOwn2 의 gen, 모르면 -1). 설명 글자(clawd atom 의 act)를 적을 때 함께 담는다
+let ownerLost = false // 이 모듈의 지금 세션이 시작 순서에서 져 주인이 못 됐다(설명 글자를 적지 않는다)
+/** 이 모듈을 가리키는 이름(불러올 때 한 번). 주인 기록(claudeOwn2 의 ownMod)이 같은 모듈의 것인지 가른다 */
+const MODULE_ID = newSlotId()
+/** 설명 글자를 적으려는 세대(og)보다 더 새 세대가 이미 적었는지 */
+const staleAct = (c: { gen?: number }, og: number) => og >= 0 && (c.gen ?? -1) > og
+/** 엔진 시계(초). 못 읽으면 nowMs()(Date.now 바탕)로 어림하고 ok=false: 그 틱은 시각을 남기는 쓰기를 하지 않는다 */
+const engineNow = async ($: any): Promise<{ s: number; ok: boolean }> => {
+  try { return { s: Math.floor((await $.clock.now()) / 1000), ok: true } } catch { return { s: Math.floor(nowMs() / 1000), ok: false } }
+}
+/**
+ * 파일을 읽은 결과(바뀌지 않았으면 지난번 것). 없으면 빈 칸들, 못 읽었거나(권한 등) 막 깨진 것이면 null(이번 틱은 기억으로 화면만, 쓰지 않는다).
+ * 같은 크기·시각으로 SHARE_DEAD_TICKS 번 잇달아 깨져 있으면 repair(덮어써서 고친다). 그사이 다른 결과가 끼면 처음부터 센다
+ */
+const readShare = async ($: any, path: string, ctx: ShareCtx, nowS: number): Promise<ShareRead | null> => {
+  const mine = () => ctx.sg === shareGen
+  let st: { size: number; mtimeMs: number }
+  try { st = await $.fs.stat(path) } catch {
+    // 없는 것(아직 아무도 안 씀)과 못 읽는 것(권한 등)을 가른다: 오류 글자 모양에 기대지 않고 exists 로 다시 묻는다
+    let missing = false
+    try { missing = !(await $.fs.exists(path)) } catch { missing = false }
+    if (mine()) { shareCache = null; shareBad = { key: '', n: 0 } }
+    return missing ? { slots: [] } : null
+  }
+  const key = `${st.size}:${st.mtimeMs}`
+  if (shareCache && shareCache.key === key && nowS - shareCache.at < SHARE_REREAD_S) { if (mine()) shareBad = { key: '', n: 0 }; return shareCache.read }
+  let text: string
+  try { text = String(await $.fs.read(path)) } catch { if (mine()) shareBad = { key: '', n: 0 }; return null }
+  const r = parseShare(text)
+  if (!mine()) return null
+  if (!r) {
+    shareBad = shareBad.key === key ? { key, n: shareBad.n + 1 } : { key, n: 1 }
+    if (shareBad.n < SHARE_DEAD_TICKS) return null // 쓰는 중에 읽었을 수 있다: 다음 틱에 다시
+    shareBad = { key: '', n: 0 }
+    return { slots: [], repair: true } // 오래 그대로 깨져 있다: 덮어써서 고친다(기억해 두지 않는다: 쓰고 나면 다시 읽는다)
+  }
+  shareBad = { key: '', n: 0 }
+  shareCache = { key, read: r, at: nowS }
+  return r
+}
+/**
+ * 화면 atom 에 올린다. 값과 함께 올린 세대를 담아, 콜백 안에서 더 새 세대(같은 모듈의 새 세션·/reload-plugins 뒤의 새 모듈)가 올린 값을 덮지 않는다
+ * (update 가 버전이 어긋나 콜백을 다시 불러도). 경고는 실제로 올라간 값으로 정한다(올리기가 늦는 동안 화면과 경고가 어긋나지 않게)
+ */
+const publishClaude = async ($: any, ctx: ShareCtx, next: ClaudeWindow[]) => {
+  const mine = () => ctx.sg === shareGen
+  let shown = await read($, claudeView)
+  if (shown.gen > ctx.gen) return
+  if (shown.gen !== ctx.gen || JSON.stringify(shown.wins) !== JSON.stringify(next))
+    shown = await update($, claudeView, cur => (cur.gen > ctx.gen || !mine() ? cur : { gen: ctx.gen, wins: next }))
+  if (shown.gen !== ctx.gen || !mine()) return
+  claudeShown = shown.wins
+  // 90·95·100% 를 넘을 때마다(세션 첫 읽기에서 이미 넘었어도, 다른 세션 값으로 넘었어도) 한 번: 한가할 때 10초 '사용량이 바닥나요'
+  const al = usageAlarm(live.usageLevels, shown.wins)
+  live.usageLevels = al.levels
+  if (al.fired) { live.dizzyDue = true; skip = 0 }
+}
+/** 자기 칸을 파일에 적는다(틱과 따로, 한 번에 하나). seq 를 받는 update 콜백이 쓰기 직전의 세대 확인이고, 그 뒤로 기다림 없이 바로 쓴다 */
+const writeShare = async ($: any, ctx: ShareCtx, path: string, myObs: Obs[], t0: number) => {
+  const mine = () => ctx.sg === shareGen
   try {
+    const c = await update($, claudeOwn, x => (x.gen !== ctx.gen ? x : { ...x, seq: x.seq + 1 }))
+    if (c.gen !== ctx.gen || !mine()) return
+    const slots = composeSlots(shareMem, ctx.id, c.seq, myObs, t0)
+    try {
+      await $.fs.write(path, shareText(slots))
+      if (mine()) { shareCache = null; shareMem = foldSlots(shareMem, slots, t0); shareRetryAt = 0 }
+    } catch {
+      // 못 쓰면 자기 값·기억으로만. 다시 쓰는 기한은 실패를 받은 때부터(그 시계를 못 읽으면 이 틱의 엔진 시각부터)
+      const tf = await engineNow($)
+      if (mine()) shareRetryAt = (tf.ok ? tf.s : t0) + SHARE_RETRY_S
+    }
+  } catch { /* 다음 틱에 */ } finally { if (mine()) shareWriting = false }
+}
+// Claude 사용량: 자기 값(비용 없는 호출) + 다른 세션의 칸들 → 화면 값(shownUsage). 바뀌었을 때만 atom·파일에 적는다
+const readClaudeNow = async ($: any, ctx: ShareCtx) => {
+  // 새 세션(같은 모듈)은 기다림 없이, /reload-plugins 뒤의 새 모듈은 atom 의 세대로 알아챈다. 옛 세대는 어떤 것도 적지 않는다
+  const mine = () => ctx.sg === shareGen
+  try {
+    // 관측 시각은 usage() 를 부르기 전에 엔진 시계로 잰다(답이 늦게 와도 늦은 시각을 붙이지 않게)
+    const clk = await engineNow($), t0 = clk.s
     const { rateLimits } = await $.session.usage()
-    const next: ClaudeWindow[] = (rateLimits ?? []).map((r: { kind: string; percentUsed: number; resetsAt?: string }) => ({
+    const own: ClaudeWindow[] = (rateLimits ?? []).map((r: { kind: string; percentUsed: number; resetsAt?: string }) => ({
       kind: r.kind, usedPct: r.percentUsed, resetsAt: r.resetsAt ? Math.floor(Date.parse(r.resetsAt) / 1000) || 0 : 0,
     }))
-    live.lowUsage = next.some(w => w.usedPct >= 90)
-    const prev = await read($, claude)
-    if (JSON.stringify(prev) !== JSON.stringify(next)) await update($, claude, () => next)
+    if (!mine()) return
+    let me = await read($, claudeOwn)
+    if (me.gen !== ctx.gen || !mine()) return
+    // 1) 자기 값의 나이: 바뀐 종류는 지금. 기록이 없으면(이 프로세스에서 갓 올림) 처음 본 값은 나이 모름(0: 파일에 적지 않는다).
+    //    엔진 시계를 못 읽은 틱은 적지 않는다(어림한 시각을 받은 시각으로 남기지 않게: 다음 틱에 엔진 시각으로 적힌다)
+    let at = nextOwnAt(me.wins, me.at, own, me.init, t0)
+    if (clk.ok && (!me.init || JSON.stringify(me.wins) !== JSON.stringify(own) || JSON.stringify(me.at) !== JSON.stringify(at))) {
+      // 세대는 콜백 안에서 본다: update 는 버전이 어긋나면 콜백을 다시 부르므로, 늦게 도착한 옛 세대의 쓰기도 새 세대 값을 덮지 못한다
+      me = await update($, claudeOwn, c => (c.gen !== ctx.gen ? c : { ...c, init: true, wins: own, at: nextOwnAt(c.wins, c.at, own, c.init, t0) }))
+      if (me.gen !== ctx.gen || !mine()) return
+      at = me.at
+    }
+    // 2) 파일(못 읽으면 null: 이번 틱은 기억해 둔 칸들로 화면만)
+    const path = await ctx.path
+    let file: ShareRead | null = null
+    if (path) { try { file = await readShare($, path, ctx, t0) } catch { file = null } }
+    if (!mine()) return
+    shareMem = foldSlots(shareMem, file?.slots ?? [], t0)
+    // 3) 자기 칸이 파일과 다르면(또는 오래 깨진 파일이면) 적는다. 틱과 따로 돌려 느린 쓰기가 화면을 막지 않게 한다.
+    //    못 읽은 틱·엔진 시계를 못 읽은 틱·쓰는 중·쓰기 실패 뒤 60초는 쓰지 않는다
+    const myObs = ownSlotWins(own, at, t0)
+    if (path && file && clk.ok && !shareWriting && t0 >= shareRetryAt && planWrite(file, shareMem, ctx.id, myObs, t0)) {
+      shareWriting = true
+      void writeShare($, ctx, path, myObs, t0)
+    }
+    // 4) 화면 값과 경고
+    await publishClaude($, ctx, shownUsage(shareMem, ctx.id, own, at, t0))
   } catch { /* 수치를 못 읽으면 앞선 값을 그대로 둔다 */ }
+}
+// 사용량 읽기는 겹쳐 돌지 않게 줄 세운다: 앞 읽기가 끝나기 전에 다음 틱이 오면 둘 다 '파일 없음'을 보고 같은 파일을 두 번 적는다.
+// 도는 중에 온 요청은 하나로 합쳐, 앞 읽기가 끝난 뒤 한 번 더 돈다(그사이 바뀐 값을 놓치지 않게). 새 세션은 앞 세션의 읽기를 기다리지 않는다.
+// 도는 줄은 번호(claudeTok)로 알아본다: 0 이면 도는 것이 없다
+let claudeRun: Promise<void> = Promise.resolve()
+let claudeTok = 0
+let claudeSeq = 0
+let claudeNext: (() => Promise<void>) | null = null
+let claudeGen = 0
+const readClaude = ($: any, ctx: ShareCtx): Promise<void> => {
+  if (ctx.sg !== shareGen) return Promise.resolve() // 앞 세션의 틱
+  const go = () => readClaudeNow($, ctx)
+  if (claudeTok) { claudeNext = go; return claudeRun }
+  const gen = claudeGen, tok = ++claudeSeq
+  claudeTok = tok
+  const loop = async () => {
+    let cur = go
+    try {
+      for (;;) {
+        await cur()
+        if (gen !== claudeGen || !claudeNext) break
+        cur = claudeNext; claudeNext = null
+      }
+    } finally { if (claudeTok === tok) claudeTok = 0 }
+  }
+  claudeRun = loop()
+  return claudeRun
 }
 // 파이썬을 부르는 명령과 운영체제: 세션마다 한 번 정하고(findHost), 파이썬을 부르는 곳은 모두 이 답을 기다린다
 let hostP: Promise<Host> = Promise.resolve(fallbackHost(undefined))
@@ -442,6 +790,8 @@ const checkClock = async ($: any) => {
 const registerCommands = async ($: any) => {
   await $.command.register({ name: 'status-panel', description: S.descPanel, argumentHint: S.hintPanel })
   await $.command.register({ name: 'clawd', description: S.descClawd, argumentHint: S.hintClawd })
+  await $.command.register({ name: 'skin', description: S.descSkin, argumentHint: S.hintSkin })
+  await $.command.register({ name: 'scene', description: S.descScene, argumentHint: S.hintScene })
 }
 // 언어를 바꾼다: 글자(atom)·시계 옆 날짜·상태 줄·명령 설명·패널 제목(열려 있고 놓여 있을 때만 다시 열어 제목만 고친다)
 const setLang = async ($: any, lg: Lang) => {
@@ -521,8 +871,44 @@ const readUsage = async ($: any) => {
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
+    // 시작 순서(hooks/share.ts 머리 주석 '세대'): 이 시작의 엔진 시각을 무엇보다 먼저 잰다. 모듈이 달라도(/reload-plugins) 비교할 수 있다
+    const startAt = (async () => { try { return Number(await $.clock.now()) } catch { return nowMs() } })()
     const started = await next(e)
     floor = FLOOR_NONE
+    // 같은 모듈에서 세션이 다시 열리면(재시작·재개) 앞 세션의 화면·전송 기억을 지운다. 남겨 두면 같은 크기로 붙은 새 패널의
+    // 첫 그리기가 앞 세션의 그림(rendPng·yardRendPng)을 넘기고, 답을 못 받은 blit 이 차례를 막는다(검수 2026-11-17 #1)
+    sessGen++; drawGen++
+    const shareSg = ++shareGen // 사용량 나누기는 새 세션의 것으로(아래 shareCtx). 세대는 기다림 없이 여기서 잡는다
+    shareCache = null; shareMem = []; shareBad = { key: '', n: 0 }; shareRetryAt = 0; shareWriting = false; claudeShown = []; ownerGen = -1; ownerLost = false
+    claudeTok = 0; claudeNext = null; claudeGen++ // 앞 세션의 사용량 읽기가 안 끝났어도 새 세션은 바로 읽는다
+    lastGeo = ''; drawnKind = null; drawnFrame = -1; rendFrame = -1; rendPng = ''; shownPng = ''; bigDirty = false
+    yardN = 0; yardRend = []; yardRendPng = ''; yardShown = ''; yardDenies = 0; yardRetryAt = 0; yardLastAt = 0; yardGen++
+    yardScene = clawdScene; fillShown = -1
+    probeDenies = 0; denyStreak = 0; backoff = 0; skip = 0
+    blitting = false; imgBusy = false; spinBlitting = false; spinMounted = false; spinDrawn = ''; probe = false; drawnDx = 0; rendDx = 0
+    liveReset()
+    // 사용량 나누기(hooks/share.ts)의 세대: atom 의 gen 을 올리는 것이 앞 세션·/reload-plugins 전 모듈에게 '이제 쓰지 말라'는 표시다.
+    // 누가 주인인지는 시작 순서로 정한다: 같은 모듈이면 이 모듈의 세대(shareSg)가 가장 새 것, 다른 모듈이 적어 둔 주인이면 시작 시각(startAt)이
+    // 그보다 이르지 않을 때만 올린다. update 가 버전이 어긋나 콜백을 다시 불러도 같은 규칙이라, 늦게 풀린 옛 시작은 새 주인을 빼앗지 못하고
+    // 먼저 적힌 옛 시작은 새 시작이 다시 올려 가져간다(어느 쪽이 먼저 닿아도 새 시작이 주인이 된다)
+    const at0 = await startAt
+    let own0 = { gen: -1, id: '' }, lost = false
+    try {
+      let took = false
+      const c = await update($, claudeOwn, x => {
+        took = shareSg === shareGen && (x.ownMod === MODULE_ID || at0 >= (x.ownAt ?? 0))
+        return took ? { ...x, id: SLOT_ID_RE.test(x.id) ? x.id : newSlotId(), gen: x.gen + 1, ownAt: at0, ownMod: MODULE_ID } : x
+      })
+      if (took && shareSg === shareGen && c.ownMod === MODULE_ID && c.ownAt === at0) own0 = c
+      else lost = true
+    } catch { /* 나눔을 쉰다(자기 값만): 주인을 모를 뿐 잃은 것은 아니다 */ }
+    // 주인이 못 된 시작(같은 모듈의 더 새 세션, 또는 더 늦게 시작한 다른 모듈이 있다)은 뒤의 초기화(Clawd 읽기·설명 글자·타이머)를 하지 않고 끝낸다:
+    // 늦게 풀린 옛 시작이 새 주인의 경고 글자를 '쉬는 중'으로 되돌리거나 세대를 지우지 않게
+    if (lost) {
+      if (shareSg === shareGen) ownerLost = true
+      return started
+    }
+    if (shareSg === shareGen) ownerGen = own0.gen
     // 언어를 먼저 정한다: 명령 설명은 이때 고른 언어로 등록한다
     curLang = await langOf($, await readPref($)); S = STR[curLang]
     try { await update($, langA, () => curLang) } catch { /* 다음 그리기에 */ }
@@ -533,24 +919,31 @@ export const register: Register = on => {
     void $.ui.open({ id: PANE, title: S.title, backgroundColor: 'transparent' })
 
     // Clawd: 켜짐·모양은 세션이 바뀌어도 남는다($.store). 그림 자료는 모드 폴더의 sprites.json
-    const loadClawd = async () => {
-      let pref: { on?: boolean; look?: string; bg?: boolean; yard?: boolean } = {}
+    const loadClawd = async (sg: number) => {
+      // 옛 판이 남긴 look('sticker' 등)은 읽지 않는다: 언제나 민무늬(0.8.7 에서 테두리 모양을 없앰)
+      let pref: { on?: boolean; bg?: boolean; yard?: boolean; theme?: string } = {}
       try { pref = ((await $.store.get('clawd')) ?? {}) as typeof pref } catch { /* 기본값 */ }
       clawdOn = pref.on !== false
-      const look: ClawdView['look'] = pref.look === 'sticker' ? 'sticker' : 'plain' // 기본은 민무늬(사용자 2026-11-16)
-      try {
-        const text = await $.fs.read(`${$.plugin.root}/clawd/sprites.json`)
-        sprites = JSON.parse(text as string) as Sprites
-        rasterCache.clear()
-      } catch { sprites = null }
+      // 테마: 저장해 둔 것(없거나 모르는 이름이면 기본 clawd). 못 읽으면 기본으로, 기본도 못 읽으면 그림 없음
+      const want = themePrefOf(pref.theme, THEMES)
+      let t: Theme | null = null
+      try { t = await loadTheme($, want) } catch { /* 아래에서 기본으로 */ }
+      if (!t && want !== THEME_DEFAULT) try { t = await loadTheme($, THEME_DEFAULT) } catch { /* 그림 없음 */ }
+      if (sg !== sessGen) return // 읽는 사이 새 세션이 열렸다: 그쪽이 읽은 것을 덮지 않는다
+      if (t) applyTheme(t)
+      else { sprites = friends = null; themeId = THEME_DEFAULT; scene = clawdScene; themeGen++; rasterCache.clear() }
       // 모드를 다시 읽으면 모듈 변수는 처음부터라, 남아 있던 설명(act)도 대기로 맞춘다. 돌던 턴은 다음 이벤트부터 다시 따라간다
       try { const t = await $.clock.now(); base = vnow = t; baseReal = Date.now() } catch { /* 처음 값(Date.now) */ }
+      if (sg !== sessGen) return
       live.lastActivity = actT0 = vnow; curAct = shownAct = 'idle'
-      const bg = pref.bg !== false // 놀이터 배경은 기본 켜짐(사용자 2026-11-16)
-      const yard = pref.yard !== false // 놀이터도 기본 켜짐
-      await update($, clawd, c => ({ ...c, on: clawdOn, look, bg, yard, act: 'idle' as ClawdAct, ready: sprites ? vnow : 0 }))
+      const bg = pref.bg !== false // 풍경은 기본 크게(배경까지, 사용자 2026-11-16)
+      const yard = pref.yard !== false
+      const og = ownerGen
+      if (!ownerLost) await update($, clawd, c => (sg !== sessGen || staleAct(c, og) ? c
+        : { on: clawdOn, bg, yard, act: 'idle' as ClawdAct, raster: c.raster, ready: sprites ? vnow : 0, ...(og >= 0 ? { gen: og } : {}) }))
     }
-    void loadClawd()
+    // /clawd 명령은 이것이 끝난 뒤에 돈다(늦게 끝난 읽기가 명령이 바꾼 테마·켜짐을 시작 때 값으로 덮지 않게)
+    clawdLoaded = loadClawd(sessGen).catch(() => { /* 그림 없음 */ })
     $.clock.every(CLAWD_TICK_MS, () => void clawdTick($))
 
     // collect.py(최대 20초)가 5초 틱보다 오래 걸려도 겹쳐 돌지 않게 한다
@@ -595,11 +988,21 @@ export const register: Register = on => {
     void tick()
     $.clock.every(EVERY_MS, () => void tick())
     home = (await $.env.get('HOME')) || (await $.env.get('USERPROFILE')) || '' // 윈도는 보통 HOME 이 없다
+    // 사용량 나누기: 위에서 정한 세대·칸 이름과 파일 자리를 지금 한 번 정해 이 세션의 읽기에 끝까지 넘긴다.
+    // CLAUDE_CONFIG_DIR 을 못 읽으면 기본 이름으로 다른 계정의 파일과 섞일 수 있어 이 세션은 파일로 나누지 않는다(자기 값만)
+    const sg = shareSg, h = home
+    const sharePath = (async () => {
+      if (!h) return ''
+      let cfg: string | undefined
+      try { cfg = await $.env.get('CLAUDE_CONFIG_DIR') } catch { return '' }
+      return `${h}/.cache/status-panel/${shareFileName(cfg)}`
+    })()
+    const shareCtx: ShareCtx = { sg, gen: own0.gen, id: own0.id, path: sharePath }
     // 배경 읽기는 세션이 끝나는 중에 늦게 끝나도 오류를 밖으로 내보내지 않는다
     const timeTick = async () => {
       try {
         await checkClock($); await readTune($)
-        await readClaude($)
+        await readClaude($, shareCtx)
       } catch { /* 다음 틱에 */ }
     }
     void timeTick()
@@ -623,9 +1026,20 @@ export const register: Register = on => {
   on('command.run', { command: 'status-panel' }, async ($, e) => {
     const a = (e.args ?? '').trim()
     if (a) {
-      // '/status-panel lang <auto|en|ko>' · '/status-panel 언어 <자동|영어|한국어>'. 답은 바꾼 언어로
-      const m = a.match(/^(lang|언어)\s+(\S+)$/i)
-      const pref = m ? parseLangArg(m[2]!) : null
+      // '/status-panel language|lang|언어 [값]'. 값이 없으면 고르기 창(자동 / 한국어 / English), 있으면 바로. 답은 바꾼 언어로
+      const cmd = parseLangCmd(a)
+      if (!cmd) return { text: S.langUsage }
+      const sg = sessGen
+      const nowName = async () => S.langName(await readPref($))
+      let pick = cmd.value
+      if (!pick) {
+        const r = await askPick($, S.langAsk(await nowName()), [S.langAuto, '한국어', 'English'], S.langHeader)
+        if (r.kind === 'failed') return { text: S.langNow(await nowName()) }
+        if (r.kind === 'dismissed' || !r.text.trim()) return { text: S.langKept(await nowName()) }
+        if (sg !== sessGen) return { text: S.langKept(await nowName()) }
+        pick = r.text
+      }
+      const pref = parseLangArg(pick)
       if (!pref) return { text: S.langUsage }
       try { await $.store.set('lang', pref) } catch { /* 이번 세션에만 적용 */ }
       await setLang($, await langOf($, pref))
@@ -674,7 +1088,8 @@ export const register: Register = on => {
           const act = toolAct(name)
           // 대답을 기다리던 도구는 답이 오면 바로 끝낸다(유지하지 않음)
           if (until > t && act !== 'ask') live.hold = { act, until }
-          if (isFailure(r)) live.oops = { until: t + OOPS_HOLD_MS } // 실패·거절: 2.4초 '앗'
+          // 실패·거절: 2.4초 '앗'. 이 플러그인이 띄운 고르기 창(AskUserQuestion)이 거절·실패로 끝난 것은 뺀다(검수 11-18 #2)
+          if (isFailure(r) && !(pickers > 0 && name === 'AskUserQuestion')) live.oops = { until: t + OOPS_HOLD_MS }
           live.lastActivity = t
         }
       })
@@ -731,43 +1146,82 @@ export const register: Register = on => {
     return next(e)
   })
 
+  // '/clawd': 큰 캐릭터 켜기·끄기만(사용자 2026-11-18). 아래 풍경은 /scene 이 따로 맡는다
   on('command.run', { command: 'clawd' }, async ($, e) => {
     const a = (e.args ?? '').trim()
+    const sg = sessGen
+    await clawdLoaded
+    if (sg !== sessGen) return { text: clawdOn ? S.clawdOn : S.clawdOff }
     const cur = await read($, clawd)
-    let isOn = cur.on, look = cur.look
-    const bg = cur.bg !== false, yard = cur.yard !== false
-    const save = async (p: { on: boolean; look: string; bg: boolean; yard: boolean }) => {
-      try { await $.store.set('clawd', p) } catch { /* 이번 세션에만 적용 */ }
-    }
-    // '/clawd 놀이터'·'/clawd 배경' 은 켜기·끄기를 바꾸고, '켜기'·'끄기' 를 붙이면 그대로 맞춘다. 다른 그림은 건드리지 않는다
-    const onOff = (w: string | undefined, now: boolean) => (w ? /^(켜기|켜|on)$/i.test(w) : !now)
-    const yardArg = a.match(/^(놀이터|yard|playground)(?:\s+(켜기|켜|on|끄기|꺼|off))?$/i)
-    if (yardArg) {
-      const want = onOff(yardArg[2], yard)
-      await save({ on: isOn, look, bg, yard: want })
-      await update($, clawd, c => ({ ...c, yard: want }))
-      return { text: `${S.yardSet(want)}${isOn || !want ? '' : S.hiddenOff}` }
-    }
-    const bgArg = a.match(/^(배경|bg|background)(?:\s+(켜기|켜|on|끄기|꺼|off))?$/i)
-    if (bgArg) {
-      const want = onOff(bgArg[2], bg)
-      await save({ on: isOn, look, bg: want, yard })
-      await update($, clawd, c => ({ ...c, bg: want }))
-      const hidden = !isOn ? S.hiddenOff : !yard ? S.hiddenYard : ''
-      return { text: `${S.bgSet(want)}${hidden}` }
-    }
+    let isOn = cur.on
     if (!a) isOn = !isOn
     else if (/^(켜기|켜|on)$/i.test(a)) isOn = true
     else if (/^(끄기|꺼|off)$/i.test(a)) isOn = false
-    else if (/^(테두리|스티커|sticker)$/i.test(a)) { isOn = true; look = 'sticker' }
-    else if (/^(민무늬|plain)$/i.test(a)) { isOn = true; look = 'plain' }
     else return { text: S.clawdUsage }
     clawdOn = isOn
     probeDenies = 0; denyStreak = 0; backoff = 0; skip = 0; drawGen++
-    await save({ on: isOn, look, bg, yard })
-    // 켜거나 모양을 고르면, 글자 방식으로 물러나 있던 것도 그림 방식부터 다시 해 본다
-    await update($, clawd, c => ({ ...c, on: isOn, look, raster: isOn ? false : c.raster }))
-    return { text: isOn ? S.clawdOn(look === 'sticker') : S.clawdOff }
+    await saveClawd($, sg, { on: isOn }, { on: cur.on, bg: cur.bg !== false, yard: cur.yard !== false })
+    // 켜면 글자 방식으로 물러나 있던 것도 그림 방식부터 다시 해 본다
+    await update($, clawd, c => ({ ...c, on: isOn, raster: isOn ? false : c.raster }))
+    return { text: `${isOn ? S.clawdOn : S.clawdOff}${await closedNote($)}` }
+  })
+
+  // '/scene [끄기|작게|크게]': 패널 맨 아래 풍경. 인자 없으면 고르기 창. 저장은 $.store 'clawd' 의 yard·bg 그대로(sceneStore)
+  on('command.run', { command: 'scene' }, async ($, e) => {
+    const a = (e.args ?? '').trim()
+    const sg = sessGen
+    await clawdLoaded
+    const nowSize = async () => { const c = await read($, clawd); return sceneOf(c.yard !== false, c.bg !== false) }
+    const name = (v: SceneSize) => S.scene[v]
+    let want: SceneSize | null
+    if (a) {
+      want = parseScene(a)
+      if (!want) return { text: S.sceneUsage }
+    } else {
+      if (sg !== sessGen) return { text: S.sceneNow(name(await nowSize())) }
+      const opts = (['off', 'small', 'full'] as const).map(name)
+      const r = await askPick($, S.sceneAsk(name(await nowSize())), opts, S.sceneHeader)
+      if (r.kind === 'failed') return { text: S.sceneNow(name(await nowSize())) }
+      if (r.kind === 'dismissed' || !r.text.trim() || sg !== sessGen) return { text: S.sceneKept(name(await nowSize())) }
+      want = parseScene(r.text)
+      if (!want) return { text: S.sceneUsage }
+    }
+    if (sg !== sessGen) return { text: S.sceneNow(name(await nowSize())) }
+    // 설정은 창이 닫힌 뒤에 읽는다(창이 떠 있는 사이 다른 명령이 바꾼 것을 덮지 않게, 검수 11-18 #4)
+    const cur = await read($, clawd)
+    const st = sceneStore(want)
+    await saveClawd($, sg, st, { on: cur.on, bg: cur.bg !== false, yard: cur.yard !== false })
+    await update($, clawd, c => ({ ...c, ...st }))
+    return { text: `${S.sceneSet(name(want))}${await closedNote($)}` }
+  })
+
+  // '/skin <이름>': 큰 마스코트·놀이터 친구·배경을 한 벌로(switchTheme). 인자 없으면 고르기 창($.ui.ask), 창을 못 띄우면 글자로
+  on('command.run', { command: 'skin' }, async ($, e) => {
+    const a = (e.args ?? '').trim()
+    const sg = sessGen
+    await clawdLoaded
+    const list = () => shownThemeNames(THEMES, curLang).join(' · ')
+    const nowText = () => ({ text: S.themeNow(themeLabel(themeId), list()) })
+    if (sg !== sessGen) return nowText()
+    // 설정(fb)은 창이 닫힌 뒤에 읽는다: 창이 떠 있는 사이 바뀐 것을 옛 값으로 덮지 않게(검수 11-18 #4)
+    const byName = async (name: string, id: string | null) => {
+      if (!id) { const msg = S.themeUnknown(clean(name).slice(0, 40), list()); try { $.ui.toast(msg) } catch { /* 글자로만 */ } return { text: msg } }
+      const cur = await read($, clawd)
+      return switchTheme($, sg, id, { on: cur.on, bg: cur.bg !== false, yard: cur.yard !== false })
+    }
+    if (a) return byName(a, themeIdOf(a, THEMES))
+    const choices = skinChoices(THEMES, curLang)
+    // 보이는 테마가 5개 이상이면 창에 다 못 넣는다: 이름으로 고르라고 붙인다
+    if (!choices) return { text: `${nowText().text}${shownThemeNames(THEMES).length > ASK_MAX ? S.skinByName : ''}` }
+    // 창은 AskUserQuestion 도구 호출로 열린다: 이 플러그인의 tool.call 훅이 보고 그동안 '대답 기다림', 끝나면(고름·닫음) 그 훅이 지운다
+    const r = await askPick($, S.skinAsk(themeLabel(themeId)), choices, S.skinHeader)
+    if (sg !== sessGen) return { text: S.skinKept(themeLabel(themeId)) } // 창이 떠 있는 사이 새 세션이 열렸다
+    // 사람이 닫음은 짧게, 창을 못 띄운 것(-p·거절·오류)은 지금 테마와 목록
+    if (r.kind === 'failed') return nowText()
+    if (r.kind === 'dismissed') return { text: S.skinKept(themeLabel(themeId)) }
+    const name = r.text.trim()
+    if (!name) return { text: S.skinKept(themeLabel(themeId)) }
+    return byName(name, skinAnswerId(name, THEMES, curLang))
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
@@ -779,7 +1233,7 @@ export const register: Register = on => {
     const cv = await read($, clawd)
     const snap = await read($, snapshot)
     const us = await read($, usage)
-    const cl = await read($, claude)
+    const cl = (await read($, claudeView)).wins
     const view = await read($, ui)
     const done = await read($, finished)
     const pw = await read($, power)
@@ -977,24 +1431,34 @@ export const register: Register = on => {
     const geo = `${e.props.bodyColumns}/${(e.props as { scroll?: { offset?: number } }).scroll?.offset ?? 0}/${e.viewport?.columns ?? 0}x${e.viewport?.rows ?? 0}`
     const keep: 'frozen' | 'shown' | 'now' = e.surface === 'terminal' && geo === lastGeo ? tune.rend : 'now'
     if (e.surface === 'terminal') lastGeo = geo
-    const curF = sprites ? curFrame(tNow, liveNow(tNow)) : 0
+    const curF = sprites ? curFrame(tNow, liveNow(tNow)) : 0, curD = curDx()
     const sameBig = keep !== 'now' && drawnKind === 'image' && (mode === 'image-side' || mode === 'image-top') &&
-      drawnLook === cv.look && rendFrame >= 0 && drawnFrame >= 0
+      rendFrame >= 0 && drawnFrame >= 0
     const frame = !sameBig ? curF : keep === 'shown' ? drawnFrame : rendFrame
+    const fdx = !sameBig ? curD : keep === 'shown' ? drawnDx : rendDx // 그 장면의 가운데 정렬 칸 수
     // 그린 것 기록은 터미널 표면이 그렸을 때만 고친다: 휴대폰·데스크톱 앱이 같이 붙어 있어도 터미널의 움직임이 멈추지 않게
     if (e.surface === 'terminal') {
       drawnKind = mode === 'image-side' || mode === 'image-top' ? 'image' : mode === 'raster' ? 'raster' : null
-      drawnLook = cv.look
-      if (!(sameBig && keep === 'frozen')) drawnFrame = frame // props 가 그대로면 화면의 장면도 그대로다
+      if (!(sameBig && keep === 'frozen')) { drawnFrame = frame; drawnDx = fdx } // props 가 그대로면 화면의 장면도 그대로다
       rendFrame = drawnKind === 'image' ? frame : -1
+      rendDx = drawnKind === 'image' ? fdx : 0
       probe = drawnKind !== null
       probeWait = PROBE_WAIT_TICKS
       drawGen++; denyStreak = 0; backoff = 0
       spinMounted = spinLive
       spinDrawn = spinLive ? spinCells(cv.act, spinIdx) : ''
     }
+    // 지난번에 넘긴 장면('frozen')·화면의 장면('shown')을 넘길 때는 그 PNG 를 그대로(테마를 바꾼 뒤에도 source 가 바뀌지 않게:
+    // 새 그림은 틱이 blit). 새로 넘길 때만 지금 테마의 그림이고, 그때는 그것이 화면에 나간다
+    const keptPng = !sameBig ? '' : keep === 'frozen' ? rendPng : keep === 'shown' ? shownPng : ''
+    // 큰 캐릭터 그림을 그리는 렌더에서만 구한다(글자 방식·꺼짐에서는 PNG 를 찾지 않는다)
+    const bigSrc = mode === 'image-side' || mode === 'image-top' ? keptPng || pngOf(frame, fdx) : ''
+    if (e.surface === 'terminal') {
+      rendPng = drawnKind === 'image' ? bigSrc : ''
+      if (drawnKind === 'image' && !keptPng) { bigDirty = false; shownPng = bigSrc }
+    }
     const img = () => (
-      <Image key={CLAWD_KEY} source={{ png: pngOf(cv.look, frame) }} columns={IMG_COLS} rows={IMG_ROWS} alt="Clawd" />
+      <Image key={CLAWD_KEY} source={{ png: bigSrc }} columns={IMG_COLS} rows={IMG_ROWS} alt="Clawd" />
     )
     // 옆 글자: Clawd 몸 높이(SIDE_TOP_ROWS 줄 아래)부터 '● 여유' · '메모리 · 부하' · 설명. 폭이 모자라면 메모리와 부하를 두 줄로,
     // 메모리 글자도 옆 칸보다 길면 짧은 쪽으로(가장 좁은 옆 칸 12칸에 '램 100% 남음'까지 들어간다)
@@ -1018,7 +1482,7 @@ export const register: Register = on => {
       <Box flexDirection="column">
         {oneLine()}
         {capRow}
-        <Raster key={CLAWD_KEY} columns={RASTER_COLS} rows={RASTER_ROWS} cells={cellsOf(frame)} />
+        <Raster key={CLAWD_KEY} columns={RASTER_COLS} rows={RASTER_ROWS} cells={cellsOf(frame, fdx)} />
       </Box>
     ) : mode === 'text' ? (
       <Box flexDirection="column">{oneLine()}{capRow}</Box>
@@ -1103,7 +1567,8 @@ export const register: Register = on => {
       + jobRows
       + (!snap.at ? 1 : 0) + (staleFor > STALE_S ? 1 : 0)
     usedRows += weekOn ? 5 : 0 // 최근 7일 덩어리
-    const yardHereRaw = canImage && cv.on && cv.yard !== false && !!cv.ready && !!sprites ? yardCount(e.props.bodyColumns ?? 0) : 0
+    // 아래 풍경은 큰 캐릭터(cv.on)와 따로: /scene 끄기 일 때만 없다(사용자 2026-11-18)
+    const yardHereRaw = canImage && cv.yard !== false && !!cv.ready && !!sprites ? yardCount(e.props.bodyColumns ?? 0) : 0
     // 놀이터를 그릴 때는 패널 높이 대신 '바닥 높이'에 맞춘다: 아래 입력창·작업자 줄이 늘었다 줄어도 그림이 옮겨지지 않게.
     // 바닥을 올려 둔 탓에 놀이터가 안 들어가면 바닥을 지금 높이로 내린다(그림을 숨겼다 다시 보이는 것보다 한 번 옮기는 게 낫다)
     const fitAt = (rows: number) => fitDone({
@@ -1122,17 +1587,18 @@ export const register: Register = on => {
     }
     const doneShown = done.slice(0, fit.shown)
 
-    // 놀이터(패널 맨 아래): 그림을 그릴 수 있고 Clawd 가 켜져 있을 때만. 다시 그릴 때 넘기는 장면은 tune.rend 대로
+    // 놀이터(패널 맨 아래 풍경): 그림을 그릴 수 있고 /scene 이 끄기가 아닐 때. 다시 그릴 때 넘기는 장면은 tune.rend 대로
     const yCols = e.props.bodyColumns ?? 0
     const yardHere = fit.yard ? yardHereRaw : 0
     const wantBg = cv.bg !== false, yRows = wantBg ? YARD_BG_ROWS : YARD_ROWS, tod = todOf(nowD)
     const yardSame = keep !== 'now' && yardHere > 0 && yardN === yardHere && yardCols === yCols && yardBg === wantBg &&
       yardRend.length === yardHere && !!yardShown && !!yardRendPng
-    const yFrames = !yardHere || !sprites ? [] : yardSame ? yardRend : yardFrames(sprites, yardHere, tNow, false)
-    const yPng = !yardHere || !sprites ? '' : yardSame ? yardRendPng
-      : wantBg ? yardScenePng(sprites, yFrames, yCols, tNow, false, tod) : yardStripPng(sprites, yFrames, yCols)
+    const yFrames = !yardHere || !friends ? [] : yardSame ? yardRend : yardFrames(friends, yardHere, tNow, false)
+    const yPng = !yardHere || !friends ? '' : yardSame ? yardRendPng
+      : wantBg ? yardScenePng(friends, yFrames, yCols, tNow, false, tod, scene) : yardStripPng(friends, yFrames, yCols)
     if (e.surface === 'terminal') {
-      if (!yardSame) yardShown = wantBg ? sceneKey(yFrames, tNow, false, tod) : yFrames.join(',')
+      if (!yardSame) { yardShown = wantBg ? sceneKey(yFrames, tNow, false, tod) : yFrames.join(','); yardScene = scene; yardGen++ }
+      yardDenies = 0; yardRetryAt = 0
       yardRend = yFrames; yardRendPng = yPng; yardN = yardHere; yardCols = yCols; yardBg = wantBg
     }
     // 최근 7일 덩어리. 잔디 그림은 다시 그리기로 바꾸지 않는다(자료가 바뀌면 틱이 blit). 폭이 바뀌면 지금 자료로 새로 그린다
@@ -1197,7 +1663,10 @@ export const register: Register = on => {
     // 줄 수: 바닥까지 layoutRows + 땅 fillRows = bodyRows. 배경이 꺼진 띠(투명한 바탕에 얇은 풀밭 선)는 채우지 않는다
     const shownTod = (/^(day|dusk|night):/.exec(yardShown)?.[1] as Tod | undefined) ?? tod
     const fillRows = term && yardHere && wantBg && bodyRows > layoutRows ? bodyRows - layoutRows : 0
-    const fillColor = `#${soilRgb(shownTod).toString(16).padStart(6, '0')}`
+    // 흙 색은 화면에 나가 있는 놀이터 그림의 배경 것(테마를 바꾼 뒤 띠가 blit 되기 전엔 옛 테마, 된 뒤엔 yardTick 이 다시 그리게 한다)
+    const fillRgb = soilRgb(shownTod, yardScene)
+    if (term) fillShown = fillRows ? fillRgb : -1
+    const fillColor = `#${fillRgb.toString(16).padStart(6, '0')}`
     const ground = fillRows ? (
       <Box flexDirection="column">
         {/* 그림은 칸 비율을 지키느라 오른쪽이 반 칸쯤 비어(yard.ts DOTS_PER_COL), 땅을 끝까지 채우면 오른쪽 아래에만 땅이 삐져나와 보였다(사용자 2026-11-16). 한 칸 좁게 */}

@@ -2,11 +2,11 @@
 
 A side pane for Claude Code in the terminal. While you chat, it shows the time, your Claude and Codex usage limits and the jobs you have running, with Clawd, a pixel mascot that reacts to what Claude is doing.
 
-> Unofficial fan project, not affiliated with or endorsed by Anthropic. Clawd is Anthropic's character; see [Clawd artwork](#clawd-artwork).
+> Unofficial fan project, not affiliated with or endorsed by Anthropic, Nintendo or any other rights holder. Clawd and the theme characters belong to their owners; see [Artwork](#artwork).
 
 [한국어](README.ko.md)
 
-![The pane while Claude fixes a bug: Clawd thinks, works, reads, waits for your answer and celebrates, under the Claude and Codex usage limits](https://github.com/TayonKim/claude-code-status-panel/releases/download/v0.8.1/demo.gif)
+![The pane while Claude fixes a bug: Clawd thinks, works, reads, waits for your answer and celebrates, under the Claude and Codex usage limits](https://github.com/TayonKim/status-panel/releases/download/v0.8.1/demo.gif)
 
 ## What it shows
 
@@ -16,7 +16,7 @@ A side pane for Claude Code in the terminal. While you chat, it shows the time, 
 - Running `codex exec` jobs and Antigravity CLI (`agy -p`) jobs, plus interactive `agy` sessions and queued jobs, with model, effort and elapsed time. Click a job (or press 1–9) to see the end of its log or stop it.
 - Recently finished jobs, with a toast when each one ends.
 - The last 7 days: how long Claude worked and how many tokens it used (input, cache writes and output; cache reads are not counted), with a strip that shades each day by working time.
-- A playground of small Clawds at the bottom (in terminals that draw images: kitty, Ghostty or iTerm2). The sky follows the time of day, with shooting stars and fireflies at night and birds and butterflies by day.
+- A scene of small Clawds at the bottom (in terminals that draw images: kitty, Ghostty or iTerm2). The sky follows the time of day, with shooting stars and fireflies at night and birds and butterflies by day.
 
 The pane never calls a model and uses no tokens. It reads local information on a timer; the only network request is Codex's own usage check (see [Privacy](#privacy)).
 
@@ -24,7 +24,11 @@ The pane never calls a model and uses no tokens. It reads local information on a
 
 Clawd has 16 moods, each tied to what Claude is doing: the wand while it edits files, the cape while subagents work, a question mark when it is waiting for your answer, and more.
 
-![Clawd's 16 moods, each labelled with when it appears](https://github.com/TayonKim/claude-code-status-panel/releases/download/v0.8.2/moods.gif)
+![Clawd's 16 moods, each labelled with when it appears](https://github.com/TayonKim/status-panel/releases/download/v0.8.2/moods.gif)
+
+## Themes
+
+Run `/skin` to swap Clawd for another cast: Kirby, Mario or Pokémon. The big character and the scene at the bottom change together. In the Mario and Pokémon themes, friends from the same game take over some moods about half the time.
 
 ## Requirements
 
@@ -34,7 +38,7 @@ Clawd has 16 moods, each tied to what Claude is doing: the wand while it edits f
   - Windows: experimental, tested only with simulated inputs. Jobs come from one PowerShell call (`Get-CimInstance Win32_Process`), memory and battery from Windows itself; there is no load figure and no log tail for `codex exec` jobs (an `agy --log-file` log still shows). Windows Terminal gets the text mode described below.
 - Claude Code 2.1.325 or later.
 - Python 3: `python3`, or on Windows `python` or `py` (the pane tries `python3`, then `python`, then `py -3`, and skips the Microsoft Store placeholder). On macOS, if it's missing, run `xcode-select --install`.
-- Optional: a terminal that draws images (kitty, Ghostty, or iTerm2 3.5 or later), to draw Clawd, the clock, the 7-day strip and the playground as pictures. Other terminals get Clawd in half-block characters (when the pane is at least 38 columns wide), a text clock, a text 7-day strip and no playground.
+- Optional: a terminal that draws images (kitty, Ghostty, or iTerm2 3.5 or later), to draw Clawd, the clock, the 7-day strip and the scene as pictures. Other terminals get Clawd in half-block characters (when the pane is at least 38 columns wide), a text clock, a text 7-day strip and no scene.
 - Optional: the Codex CLI, signed in, for Codex usage.
 
 ## Install
@@ -42,7 +46,7 @@ Clawd has 16 moods, each tied to what Claude is doing: the wand while it edits f
 At the prompt of a Claude Code terminal session:
 
 ```
-/plugin install status-panel --marketplace TayonKim/claude-code-status-panel
+/plugin install status-panel --marketplace TayonKim/status-panel
 ```
 
 Answer `y` to add the marketplace, then choose a scope. The pane opens by itself when the terminal is wide enough (from about 110–144 columns, depending on Claude Code's layout). In a narrower terminal, run `/status-panel`.
@@ -52,10 +56,12 @@ To remove it: `/plugin uninstall status-panel`.
 ### Updating
 
 ```
-claude plugin update status-panel@claude-code-status-panel
+claude plugin update status-panel@status-panel
 ```
 
 Then run `/reload-plugins` at the Claude Code prompt. The new version only takes effect after the reload. If the pane looks wrong afterwards, restart Claude Code.
+
+If you installed it under the old name (TayonKim/claude-code-status-panel), your update command still works: `claude plugin update status-panel@claude-code-status-panel`.
 
 The same applies when you change the plugin's files directly (for example, copying a fresh checkout over the plugin folder): run `/reload-plugins` afterwards.
 
@@ -64,11 +70,10 @@ The same applies when you change the plugin's files directly (for example, copyi
 | Command | What it does |
 |---|---|
 | `/status-panel` | Open the pane |
-| `/status-panel lang en` · `ko` · `auto` | Set the language. `auto` follows your locale (`LC_ALL`, then `LC_MESSAGES`, then `LANG`): Korean when it starts with `ko`, English otherwise |
+| `/status-panel language` · `language auto\|english\|korean` | Pick the language, or set it. `auto` follows your locale (`LC_ALL`, then `LC_MESSAGES`, then `LANG`): Korean when it starts with `ko`, English otherwise |
 | `/clawd` · `/clawd on` · `/clawd off` | Toggle Clawd, or turn it on or off |
-| `/clawd plain` · `/clawd sticker` | Set Clawd's look: plain (no outline) or sticker (outlined) |
-| `/clawd yard` · `/clawd yard on` · `/clawd yard off` | Toggle or set the playground |
-| `/clawd bg` · `/clawd bg on` · `/clawd bg off` | Toggle or set the playground background |
+| `/scene` · `/scene off\|small\|full` | Pick the scene at the bottom, or set it. `small`: the small Clawds and the ground line. `full` (default): with sky, hills, clouds and trees. Stays when Clawd is off |
+| `/skin` · `/skin <name>` | Pick a theme, or set it: `clawd`, `kirby`, `mario`, `pokemon` |
 
 Settings persist across sessions.
 
@@ -83,12 +88,15 @@ Everything is read on your computer:
 - Codex usage: from your local `codex app-server`, under the Codex account you're signed in to, about every 5 minutes and when a job finishes (or when you run `/status-panel`). Codex makes that request to OpenAI and keeps its usual logs for it.
 - Nothing is sent anywhere else.
 - Settings are kept in Claude Code's plugin storage.
-- The only file the pane writes is `~/.cache/status-panel/week.json` (readable only by you). For each transcript file it holds the path, how far it has been read, its daily totals and the IDs of its last few responses, so that a repeated response is counted once.
+- The pane writes two files in `~/.cache/status-panel/`. `week.json` (readable only by you) holds, for each transcript file, the path, how far it has been read, its daily totals and the IDs of its last few responses, so that a repeated response is counted once.
+- `claude-usage-v2.json` holds only a random ID for each session, the Claude usage window names (such as `five_hour`) and numbers (percent used, reset time, when it was seen, a write counter), so every open session shows the latest usage even when you work in another one. With `CLAUDE_CONFIG_DIR` set, the file name gets a hash of that path.
 - The developer tuning file `~/.claude/status-panel-tune.json` is read only if it exists.
 
-## Clawd artwork
+## Artwork
 
 `clawd/sprites.json` is fan-made pixel art of Clawd, Anthropic's mascot, based on Anthropic's official Clawd stickers. It is not covered by this repository's MIT license, and the character belongs to Anthropic. It will be taken down on request.
+
+The Kirby, Mario and Pokémon themes are unofficial fan-made pixel art. They are not affiliated with or endorsed by Nintendo, HAL Laboratory, Game Freak, Creatures or The Pokémon Company, and the characters belong to them. Like the Clawd art, the theme artwork is not covered by this repository's MIT license, and it will be taken down on request.
 
 ## Development
 
@@ -105,4 +113,4 @@ For tuning while developing, a JSON file at `~/.claude/status-panel-tune.json` i
 
 ## License
 
-The code is MIT licensed (see [LICENSE](LICENSE)). The Clawd artwork is not; see [Clawd artwork](#clawd-artwork).
+The code is MIT licensed (see [LICENSE](LICENSE)). The artwork (Clawd and the themes) is not; see [Artwork](#artwork) and [NOTICE](NOTICE).

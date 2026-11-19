@@ -10,7 +10,8 @@ export type Sprites = {
   palette: Record<string, string>
   frames: string[][]
   states: Record<string, { label: string; ms: number; seq: number[] }>
-  png: { plain: string[]; sticker: string[] }
+  /** plain: 미리 구운 그림(장면마다), shift: 가운데 정렬로 옮겨 구운 그림("장면:dx"). sticker 는 0.8.8 부터 읽지 않는다(옛 묶음·시험 자료에 남아 있어도 된다) */
+  png: { plain: string[]; shift?: Record<string, string>; sticker?: string[] }
 }
 
 // 동작 설명 글자와 색(시안 build_mock.py 의 CAP). color 가 없으면 흐림. 글자는 hooks/i18n.ts 의 cap 표(이 CAP 은 한국어, 언어별은 capText)
@@ -80,8 +81,8 @@ export type ClawdLive = {
   subagents: boolean
   /** Codex·agy 작업이 돎 */
   jobs: boolean
-  /** Claude 사용량 창 중 하나라도 남은 양 10% 이하 */
-  lowUsage: boolean
+  /** 사용량 경고 반응(until 까지 '사용량이 바닥나요'). 사용량 창이 90·95·100% 를 넘은 뒤 한가할 때 한 번 10초(usageAlarm·dizzyStart) */
+  dizzy?: { until: number } | null
   /** 마지막 활동 시각 */
   lastActivity: number
   /** 권한 확인 창이 열려 사람의 대답을 기다리는 중(메인·서브에이전트 어느 쪽이든) */
@@ -111,14 +112,47 @@ export const pickAct = (l: ClawdLive): ClawdAct => {
   if (l.subagents) return 'cape'
   if (l.celebrate && l.now < l.celebrate.until) return l.celebrate.act
   if (l.jobs) return 'coffee'
-  if (l.lowUsage) return 'dizzy'
+  if (l.dizzy && l.now < l.dizzy.until) return 'dizzy'
   if (l.night) return 'sleepy'
   const idle = l.now - l.lastActivity
   return idle > KITE_AFTER_MS ? 'kite' : idle > BUBBLE_AFTER_MS ? 'bubble' : 'idle'
 }
 
+// ── 손님 틀(guest variant): 테마 states 의 "<상태>@<손님>" 키. 같은 frames·palette 를 쓰는 그 상태의 다른 연출 ──
+/** 손님 id: 소문자 ascii(숫자·_·- 허용) */
+export const GUEST_RE = /^[a-z0-9_-]+$/
+/** "edit@mimic" → ['edit', 'mimic']. 손님 키가 아니면 null */
+export const splitVariant = (key: string): [string, string] | null => {
+  const i = key.indexOf('@')
+  if (i <= 0 || key.indexOf('@', i + 1) !== -1) return null
+  const g = key.slice(i + 1)
+  return GUEST_RE.test(g) ? [key.slice(0, i), g] : null
+}
+/** 작은 해시(FNV-1a 32비트): 같은 입력이면 늘 같은 값 */
+const fnv1a = (s: string) => {
+  let h = 0x811c9dc5
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0 }
+  return h >>> 0
+}
+/**
+ * 동작 act 가 actT0 에 시작될 때 보일 states 키. 손님 키 act@* 가 없으면 act 그대로(예전과 같다).
+ * 있으면 GUEST_CHANCE(반반) 로 손님 중 하나(고르게), 나머지는 본래 act. (act, actT0) 의 해시로 정해서, 같은 동작이 이어지는 동안은 다시 굴리지 않는다
+ */
+/** 손님이 맡은 동작에서 손님이 나올 확률(사용자 결정 2026-11-18: 손님도 자주 보이게 반반) */
+export const GUEST_CHANCE = 0.5
+export const pickVariant = (states: Record<string, unknown>, act: string, actT0: number): string => {
+  const guests: string[] = []
+  for (const k of Object.keys(states)) { const v = splitVariant(k); if (v && v[0] === act) guests.push(k) }
+  if (!guests.length) return act
+  guests.sort()
+  const h = fnv1a(`${act}:${Math.floor(actT0)}`)
+  const roll = ((h >>> 8) % 1000) / 1000
+  if (roll >= GUEST_CHANCE && Object.prototype.hasOwnProperty.call(states, act)) return act
+  return guests[(h >>> 20) % guests.length]!
+}
+
 /** 30분 넘게 아무 활동이 없으면 움직임을 멈춘다(첫 장면만) */
-export const isFrozen = (l: ClawdLive) => !isBusy(l) && l.now - l.lastActivity > FREEZE_AFTER_MS
+export const isFrozen = (l: ClawdLive) => !isBusy(l) && l.now - l.lastActivity > FREEZE_AFTER_MS && !(l.dizzy && l.now < l.dizzy.until)
 
 /** 동작이 시작된 시각(t0)부터 seq 를 ms 간격으로 돌린 지금의 프레임 번호 */
 export const frameAt = (st: { ms: number; seq: number[] }, t0: number, now: number, frozen: boolean) => {
@@ -244,3 +278,56 @@ export const rasterCells = (frame: string[], palette: Record<string, string>) =>
   for (let i = 0; i < w.length; i++) dv.setUint32(i * 4, w[i] ?? 0, true)
   return base64(b)
 }
+
+// ── 큰 캐릭터 가운데 정렬(시안31 '가'안, 사용자 2026-11-18) ──
+// 동작(states 키, 손님 '상태@손님' 포함)마다 그 동작의 모든 장면을 합친 가로 범위 [lo, hi] 를 잰다.
+// 테마의 가운데 자리 home = center(idle 의 범위). 동작마다 dx = max(0, min(home, W-1-hi)):
+// 대부분은 같은 자리(home)에 서고, 소품이 넓어 오른쪽이 모자란 동작만 들어가는 만큼 옮긴다. 아래 풍경의 작은 캐릭터에는 쓰지 않는다
+/** 그 동작의 장면들을 합친 가로 범위. 도트가 하나도 없으면 [0, W-1](옮기지 않음) */
+export const actExtent = (sp: Pick<Sprites, 'canvas' | 'frames' | 'states'>, key: string): [number, number] => {
+  const W = sp.canvas[0], st = sp.states[key] ?? sp.states.idle
+  let lo = W, hi = -1
+  for (const n of new Set(st?.seq ?? [])) for (const row of sp.frames[n] ?? []) {
+    for (let x = 0; x < W && x < row.length; x++) if (row[x] !== '.') { if (x < lo) lo = x; if (x > hi) hi = x }
+  }
+  return hi < 0 ? [0, W - 1] : [lo, hi]
+}
+/** 범위를 칸 가운데로 옮기는 칸 수(왼쪽 여백과 오른쪽 여백을 같게, 홀수면 왼쪽으로 반 칸) */
+export const centerShift = ([lo, hi]: [number, number], W: number) => Math.max(0, Math.floor(((W - 1 - hi) - lo) / 2))
+const shiftMemo = new WeakMap<object, Map<string, number>>()
+/** 동작 key 의 dx. 같은 Sprites 면 기억해 둔다(장면이 바뀌어도 한 동작 안에서는 같다) */
+export const actShift = (sp: Pick<Sprites, 'canvas' | 'frames' | 'states'>, key: string) => {
+  let m = shiftMemo.get(sp)
+  if (!m) { m = new Map(); shiftMemo.set(sp, m) }
+  let v = m.get(key)
+  if (v === undefined) {
+    const W = sp.canvas[0], home = centerShift(actExtent(sp, 'idle'), W), hi = actExtent(sp, key)[1]
+    v = Math.max(0, Math.min(home, W - 1 - hi))
+    m.set(key, v)
+  }
+  return v
+}
+/** 도트 줄들을 오른쪽으로 dx 칸 민다(폭은 그대로, 넘친 것은 버린다) */
+export const shiftRows = (rows: readonly string[], dx: number, W = 38) =>
+  dx <= 0 ? rows as string[] : rows.map(r => ('.'.repeat(dx) + r.padEnd(W, '.')).slice(0, W))
+
+// ── 사용량 경고 반응(사용자 2026-11-18: '사용량이 바닥나요' 가 기본 상태처럼 계속 나오지 않게) ──
+// 창(5시간·주간)마다 단계 1(90%↑)·2(95%↑)·3(100%)를 기억하고, 단계가 오를 때마다 한 번 뜬다(세션 첫 읽기에서 이미 90%↑ 여도 한 번).
+// 90% 아래로 내려가면(리셋) 그 창의 기록을 지운다. 뜬 것은 한가한 동작일 때 DIZZY_MS 동안 보이고, 바쁘면 한가해질 때까지 미룬다(여럿이어도 하나로)
+export const DIZZY_MS = 10_000
+export const usageLevel = (usedPct: number) => (usedPct >= 100 ? 3 : usedPct >= 95 ? 2 : usedPct >= 90 ? 1 : 0)
+/** 지난 단계 + 새로 읽은 창들 → 새 단계와, 어느 창이든 단계가 올랐는지 */
+export const usageAlarm = (prev: Readonly<Record<string, number>>, windows: readonly { kind: string; usedPct: number }[]) => {
+  const levels: Record<string, number> = {}
+  let fired = false
+  for (const w of windows) {
+    const lv = usageLevel(w.usedPct)
+    if (lv > (prev[w.kind] ?? 0)) fired = true
+    if (lv > 0) levels[w.kind] = lv
+  }
+  return { levels, fired }
+}
+const CALM: ReadonlySet<ClawdAct> = new Set<ClawdAct>(['idle', 'bubble', 'kite', 'sleepy'])
+/** 미뤄 둔 경고가 있을 때: 경고 없이 고른 동작이 한가함(쉬기·방울·연·졸기)이면 지금부터 DIZZY_MS. 아직 바쁘면 null(계속 미룬다) */
+export const dizzyStart = (l: ClawdLive): { until: number } | null =>
+  CALM.has(pickAct({ ...l, dizzy: null })) ? { until: l.now + DIZZY_MS } : null

@@ -1,5 +1,5 @@
 import { expect, mock, test } from 'claude-code/testing'
-import { AGY_TAG, ARGON_TTY, STR, langFromEnv, parseLangArg, prefOf } from '../hooks/i18n'
+import { AGY_TAG, ARGON_TTY, STR, langFromEnv, parseLangArg, parseLangCmd, prefOf } from '../hooks/i18n'
 import { CAP, IMG_COLS, SIDE_TEXT_COLS, cellWidth } from '../hooks/clawd'
 import { dateOf } from '../hooks/clock'
 
@@ -27,12 +27,17 @@ const JOB = { pid: 111, tool: 'codex', label: 'Data round 2', project: 'x', mode
 const TTY = { pid: 222, tool: 'argon', label: ARGON_TTY, project: '', model: '', effort: '', elapsed: 180, rssMB: 50, idle: null, last: '', tail: [], out: '' }
 const SNAP = { at: NOW, jobs: [] as unknown[], waiting: [] as unknown[], mem: { freePct: 58, swapUsedGB: 0.4, swapTotalGB: 2, load: 4.3, cpus: 10 } }
 const USAGE = { at: NOW, windows: [{ usedPct: 31, mins: 10080, resetsAt: NOW + 2 * 86400 + 9 * 3600 + 30 * 60 + 20 }], reached: null, plan: 'pro', resetCredits: 1, credits: [{ title: 'Full reset', expiresAt: NOW + 27 * 86400 + 3600 }] }
-const RATE = [{ kind: 'five_hour', percentUsed: 18.2, resetsAt: iso(NOW + 7800) }, { kind: 'seven_day', percentUsed: 39, resetsAt: iso(NOW + 3 * 86400) }]
+// 리셋 시각은 엔진이 사용량을 물을 때의 시각에서 잰다: 파일을 불러온 때(NOW)에서 재면, 시험이 여럿 같이 돌아 몇 초 늦게 그려질 때
+// 사용 속도(5시간 창 18.2% 사용, 리셋까지 7800초 → 38.5% 경계 근처)가 38% 에서 39% 로 넘어간다(약 5.4초)
+const RATE_AT = (t: number) => [{ kind: 'five_hour', percentUsed: 18.2, resetsAt: iso(t + 7800) }, { kind: 'seven_day', percentUsed: 39, resetsAt: iso(t + 3 * 86400) }]
 const BATT = "Now drawing from 'Battery Power'\n -InternalBattery-0 (id=1)\t69%; discharging; 4:28 remaining present: true\n"
 
-type Calls = { rate?: unknown; toasts: string[]; store: Record<string, unknown>; snap: typeof SNAP; usage?: unknown; registered: { name: string; description: string; argumentHint?: string }[]; images: string[]; status: (string | undefined)[]; opens: { title?: string }[] }
+type Ask = { question: string; header?: string; options: string[] }
+// 고르기 창의 결과: 고른 글자(answer, null 이면 빈 answers = 닫음) · tool.call 의 거절(deny) · 도구 오류(isError)
+type AskReply = { answer: string | null } | { deny: string } | { isError: string }
+type Calls = { ask?: (q: Ask) => AskReply; asks: Ask[]; rate?: unknown; toasts: string[]; store: Record<string, unknown>; snap: typeof SNAP; usage?: unknown; registered: { name: string; description: string; argumentHint?: string }[]; images: string[]; status: (string | undefined)[]; opens: { title?: string }[] }
 const engine = (on: any, env: Record<string, string>, o: { clock?: boolean; store?: Record<string, unknown> } = {}) => {
-  const calls: Calls = { toasts: [], store: { ...o.store }, snap: SNAP, registered: [], images: [], status: [], opens: [] }
+  const calls: Calls = { asks: [], toasts: [], store: { ...o.store }, snap: SNAP, registered: [], images: [], status: [], opens: [] }
   const run = (stdout: string, exitCode = 0) => ({ value: { exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
   on('command.register', (_: unknown, e: Calls['registered'][number]) => { calls.registered.push(e); return { value: { command: e.name } } })
   on('ui.open', (_: unknown, e: { title?: string }) => { calls.opens.push(e); return { value: { isPlaced: true } } })
@@ -49,10 +54,20 @@ const engine = (on: any, env: Record<string, string>, o: { clock?: boolean; stor
   if (!o.clock) { on('clock.every', () => ({ value: undefined })); on('clock.now', () => ({ value: Date.now() })) }
   on('session.cwd', () => ({ value: '/Users/someone/project' }))
   on('session.root', () => ({ value: '/Users/someone/project' }))
-  on('session.usage', () => ({ value: { startedAt: 0, context: {}, rateLimits: calls.rate ?? RATE } }))
+  on('session.usage', () => ({ value: { startedAt: 0, context: {}, rateLimits: calls.rate ?? RATE_AT(Math.floor(Date.now() / 1000)) } }))
   on('fs.exists', () => ({ value: false }))
   on('fs.read', () => ({ value: JSON.stringify(SPRITES) }))
   on('agent.list', () => ({ value: [] }))
+  // $.ui.ask 는 AskUserQuestion 도구 호출로 온다(theme.test.tsx 와 같은 흉내). 실패는 throw 가 아니라 엔진처럼 { deny }·{ isError } 로 돌려준다
+  on('tool.call', (_: unknown, e: any) => {
+    if (e.tool !== 'AskUserQuestion') return { result: {} }
+    const q0 = e.questions[0], q: Ask = { question: q0.question, header: q0.header, options: q0.options.map((o: { label: string }) => o.label) }
+    calls.asks.push(q)
+    const r = calls.ask ? calls.ask(q) : { answer: null }
+    if ('deny' in r) return { deny: r.deny }
+    if ('isError' in r) return { isError: true, result: undefined, text: r.isError }
+    return { result: { questions: e.questions, answers: r.answer === null ? {} : { [q.question]: r.answer } } }
+  })
   on('ui.blit', (_: unknown, e: { key: string; cells?: string }) => { if (!e.cells) calls.images.push(e.key); return { value: {} } })
   on('ui.toast', (_: unknown, e: { text: string }) => { calls.toasts.push(e.text); return { value: undefined } })
   on('ui.status', (_: unknown, e: { text?: string }) => { calls.status.push(e.text); return { value: undefined } })
@@ -163,13 +178,24 @@ test('언어 고르기: LC_ALL → LC_MESSAGES → LANG 중 처음 비어 있지
   expect(prefOf('ko')).toBe('ko'); expect(prefOf('en')).toBe('en'); expect(prefOf(undefined)).toBe('auto'); expect(prefOf('fr')).toBe('auto')
   expect(parseLangArg('EN')).toBe('en'); expect(parseLangArg('한국어')).toBe('ko'); expect(parseLangArg('자동')).toBe('auto'); expect(parseLangArg('영어')).toBe('en')
   expect(parseLangArg('fr')).toBeNull()
+  // 풀어 쓴 영어 값도(대소문자 무시)
+  expect(parseLangArg('English')).toBe('en'); expect(parseLangArg('KOREAN')).toBe('ko'); expect(parseLangArg('Auto')).toBe('auto')
+  // 인자 낱말: language·lang·언어, 값은 없어도 된다
+  expect(parseLangCmd('language english')).toEqual({ value: 'english' })
+  expect(parseLangCmd('LANG')).toEqual({ value: '' })
+  expect(parseLangCmd('언어 한국어')).toEqual({ value: '한국어' })
+  expect(parseLangCmd('languages en')).toBeNull()
+  expect(parseLangCmd('lang en ko')).toBeNull()
 })
 
 test('환경 변수가 영어면 영어로 띄우고 명령 설명도 영어로 등록한다', async ($, on) => {
   const calls = engine(on, EN_ENV)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   expect(calls.registered.find(c => c.name === 'status-panel')?.description).toBe(STR.en.descPanel)
-  expect(calls.registered.find(c => c.name === 'clawd')?.argumentHint).toBe('[on|off|plain|sticker|yard|bg]')
+  expect(calls.registered.find(c => c.name === 'clawd')?.argumentHint).toBe('[on|off]')
+  expect(calls.registered.find(c => c.name === 'scene')).toMatchObject({ description: STR.en.descScene, argumentHint: '[off|small|full]' })
+  expect(calls.registered.find(c => c.name === 'status-panel')?.argumentHint).toBe('[language]')
+  expect(calls.registered.find(c => c.name === 'skin')).toMatchObject({ description: STR.en.descSkin, argumentHint: '[name]' })
   expect(calls.opens[0]?.title).toBe('Status panel')
   const ui = await mounted($, /Codex 7d/, 'desktop')
   expect(await ui.find({ type: 'Text', text: /^No jobs running$/ })).toBeDefined()
@@ -199,7 +225,6 @@ test('/status-panel lang·언어: 바꾼 언어로 답하고 저장하며, 잘�
   expect(calls.store.lang).toBe('en')
   expect((await slash($, '')).text).toBe('Opened the status panel.')
   expect((await slash($, 'lang fr')).text).toBe(STR.en.langUsage)
-  expect((await slash($, 'lang')).text).toBe(STR.en.langUsage)
   expect((await slash($, 'lang ko')).text).toBe('언어: 한국어')
   expect(calls.store.lang).toBe('ko')
   expect((await slash($, '언어 영어')).text).toBe('Language: English')
@@ -209,7 +234,89 @@ test('/status-panel lang·언어: 바꾼 언어로 답하고 저장하며, 잘�
   expect((await slash($, '언어 자동')).text).toBe('언어: 자동 (한국어)')
   expect(calls.store.lang).toBe('auto')
   expect((await slash($, 'lang auto')).text).toBe('언어: 자동 (한국어)')
-  await (await mounted($, /Codex 주간/, 'desktop')).unmount()
+  // 인자 낱말 language, 풀어 쓴 값, 대소문자 무시
+  expect((await slash($, 'language english')).text).toBe('Language: English')
+  expect(calls.store.lang).toBe('en')
+  expect((await slash($, 'LANGUAGE Korean')).text).toBe('언어: 한국어')
+  expect(calls.store.lang).toBe('ko')
+  expect((await slash($, 'Language AUTO')).text).toBe('언어: 자동 (한국어)')
+  expect(calls.store.lang).toBe('auto')
+  expect((await slash($, 'language KO')).text).toBe('언어: 한국어')
+  expect((await slash($, '언어 English')).text).toBe('Language: English')
+  expect((await slash($, 'language klingon')).text).toBe(STR.en.langUsage)
+  expect(STR.en.langUsage).toBe('Usage: /status-panel · /status-panel language [auto|english|korean]')
+  expect(STR.ko.langUsage).toContain('/status-panel 언어 [자동|영어|한국어]')
+  expect(calls.asks).toHaveLength(0) // 값을 붙이면 창을 띄우지 않는다
+  await (await mounted($, /Codex 7d/, 'desktop')).unmount()
+})
+
+test('/status-panel language|lang|언어 만 치면 고르기 창: 지금 값·선택지·머리표, 고르면 저장·적용', async ($, on) => {
+  const calls = engine(on, KO_ENV)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  calls.ask = () => ({ answer: 'English' })
+  expect((await slash($, '언어')).text).toBe('Language: English')
+  expect(calls.asks.at(-1)).toEqual({ question: STR.ko.langAsk(STR.ko.langName('auto')), header: '언어', options: ['자동', '한국어', 'English'] })
+  expect(calls.asks.at(-1)!.question).toBe('지금 자동 (한국어). 화면 언어를 무엇으로 할까요?')
+  expect(calls.store.lang).toBe('en')
+  // 영어 화면: 선택지 '자동'은 영어로, 한국어·English 는 그 언어 그대로
+  calls.ask = () => ({ answer: '한국어' })
+  expect((await slash($, 'language')).text).toBe('언어: 한국어')
+  expect(calls.asks.at(-1)).toEqual({ question: STR.en.langAsk('English'), header: 'Language', options: ['Auto', '한국어', 'English'] })
+  expect(calls.store.lang).toBe('ko')
+  calls.ask = () => ({ answer: '자동' })
+  expect((await slash($, 'LANG')).text).toBe('언어: 자동 (한국어)')
+  expect(calls.asks.at(-1)!.question).toBe(STR.ko.langAsk('한국어'))
+  expect(calls.store.lang).toBe('auto')
+  // Other 로 친 글자도 값으로(대소문자 무시), 모르는 글자면 사용법
+  calls.ask = () => ({ answer: 'english' })
+  expect((await slash($, 'lang')).text).toBe('Language: English')
+  calls.ask = () => ({ answer: 'klingon' })
+  expect((await slash($, 'lang')).text).toBe(STR.en.langUsage)
+  expect(calls.store.lang).toBe('en')
+  expect(calls.asks).toHaveLength(5)
+  await (await mounted($, /Codex 7d/, 'desktop')).unmount()
+})
+
+test('언어 고르기 창: 닫으면·빈 답이면 그대로, 창을 못 띄우면 지금 값과 쓰는 법, 어느 쪽도 앗이 되지 않는다', { timeoutMs: 15000 }, async ($, on) => {
+  const clock = mock.clock(on, { now: new Date(2026, 10, 18, 14, 0, 0).getTime() })
+  const calls = engine(on, KO_ENV, { clock: true, store: { lang: 'ko' } })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await clock.advance(200)
+  const kept = STR.ko.langKept('한국어'), now = STR.ko.langNow('한국어')
+  const cases: [AskReply, string][] = [
+    [{ answer: null }, kept], // 빈 answers: 'no answer (the dialog was dismissed)'
+    [{ isError: 'User declined to answer questions' }, kept],
+    [{ deny: "The user doesn't want to proceed with this tool use." }, kept],
+    [{ answer: '   ' }, kept],
+    [{ deny: 'no one to ask' }, now], // 비대화형: 창을 못 띄움
+    [{ deny: 'rejected by rule' }, now],
+    [{ isError: 'tool failed' }, now],
+  ]
+  for (const [reply, want] of cases) {
+    calls.ask = () => reply
+    expect([JSON.stringify(reply), (await slash($, '언어')).text]).toEqual([JSON.stringify(reply), want])
+    expect(calls.store.lang).toBe('ko') // 아무것도 바뀌지 않는다
+  }
+  expect(calls.asks).toHaveLength(cases.length) // 헛돌지 않는지: 매번 창을 띄우려 했다
+  expect(now).toBe('언어: 한국어 · /status-panel 언어 [자동|영어|한국어]')
+  // 거절·실패로 끝난 창(이 플러그인이 띄운 것)은 Clawd 를 '앗, 막혔어요'로 바꾸지 않는다
+  await clock.advance(300)
+  const ui = await $.ui.mount({ ...PANE(), surface: 'terminal', viewport: VIEW })
+  await ui.drawn()
+  expect(await ui.find({ type: 'Text', text: exact(STR.ko.cap.oops) })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: exact(STR.ko.cap.idle) })).toBeDefined()
+  await ui.unmount()
+})
+
+test('영어 화면: 언어 창을 닫으면 영어로 그대로, 못 띄우면 language 를 앞세운 안내', async ($, on) => {
+  const calls = engine(on, EN_ENV)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  calls.ask = () => ({ answer: null })
+  expect((await slash($, 'language')).text).toBe('Language unchanged: auto (English)')
+  calls.ask = () => ({ deny: 'no one to ask' })
+  expect((await slash($, 'language')).text).toBe('Language: auto (English) · /status-panel language [auto|english|korean]')
+  expect(calls.store.lang).toBeUndefined()
+  await (await mounted($, /Codex 7d/, 'desktop')).unmount()
 })
 test('영어 환경에서 lang auto 는 영어로 답한다', async ($, on) => {
   engine(on, EN_ENV, { store: { lang: 'ko' } })
@@ -317,10 +424,15 @@ test('언어를 바꾸면 명령 설명도 그 언어로 다시 등록하고, /s
   const last = (name: string) => calls.registered.filter(c => c.name === name).at(-1)
   expect(last('status-panel')).toMatchObject({ description: STR.ko.descPanel, argumentHint: STR.ko.hintPanel })
   expect((await slash($, 'lang en')).text).toBe('Language: English')
-  expect(last('status-panel')).toMatchObject({ description: STR.en.descPanel, argumentHint: '[lang <auto|en|ko>]' })
-  expect(last('clawd')).toMatchObject({ description: STR.en.descClawd, argumentHint: STR.en.hintClawd })
+  expect(last('status-panel')).toMatchObject({ description: STR.en.descPanel, argumentHint: '[language]' })
+  expect(last('clawd')).toMatchObject({ description: STR.en.descClawd, argumentHint: '[on|off]' })
+  expect(last('skin')).toMatchObject({ description: STR.en.descSkin, argumentHint: STR.en.hintSkin })
+  expect(last('scene')).toMatchObject({ description: STR.en.descScene, argumentHint: '[off|small|full]' })
   expect((await slash($, '언어 한국어')).text).toBe('언어: 한국어')
-  expect(last('clawd')?.description).toBe(STR.ko.descClawd)
+  expect(last('status-panel')?.argumentHint).toBe('[언어]')
+  expect(last('clawd')).toMatchObject({ description: STR.ko.descClawd, argumentHint: '[켜기|끄기]' })
+  expect(last('scene')).toMatchObject({ description: STR.ko.descScene, argumentHint: '[끄기|작게|크게]' })
+  expect(last('skin')).toMatchObject({ description: STR.ko.descSkin, argumentHint: STR.ko.hintSkin })
   await (await mounted($, /Codex 주간/, 'desktop')).unmount()
 })
 
