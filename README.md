@@ -30,6 +30,8 @@ Clawd has 16 moods, each tied to what Claude is doing: the wand while it edits f
 
 Run `/skin` to swap Clawd for another cast: Kirby, Mario or Pokémon. The big character and the scene at the bottom change together. In the Mario and Pokémon themes, friends from the same game take over some moods about half the time.
 
+![/skin switching Clawd to Kirby, Mario and Pokémon, then all four themes side by side](https://github.com/TayonKim/status-panel/releases/download/v0.9.0/themes.gif)
+
 ## Requirements
 
 - An operating system:

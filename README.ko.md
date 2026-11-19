@@ -30,6 +30,8 @@ Clawd 는 Claude 가 하는 일에 따라 16가지 모습으로 바뀌어요. �
 
 `/skin` 으로 Clawd 대신 다른 캐릭터를 고를 수 있어요: 커비, 마리오, 포켓몬. 큰 캐릭터와 아래 풍경이 같이 바뀌어요. 마리오·포켓몬 테마에서는 몇몇 동작에서 같은 게임의 친구가 반쯤 확률로 대신 나와요.
 
+![/skin 으로 Clawd 를 커비·마리오·포켓몬으로 바꾸고, 끝에 네 테마를 나란히 보여 주는 화면](https://github.com/TayonKim/status-panel/releases/download/v0.9.0/themes_ko.gif)
+
 ## 필요한 것
 
 - 운영체제:
